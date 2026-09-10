@@ -64,12 +64,7 @@ def inbound_key(tag: str) -> str:
 
 
 def tracked_inbounds(state: dict | None = None) -> dict[str, float]:
-    """Return inbound -> additive ratio offset from the native Node ratio.
-
-    Example: Node Ratio 2.0 and Host shown as 2.7 stores offset +0.7. Usage
-    observed on that Node is charged with 2.0 + 0.7 = 2.7. If the Node later
-    changes to 3.0, the same Host automatically becomes 3.7.
-    """
+    """Return inbound -> additive ratio offset from the native Node ratio."""
     state = state or load_state()
     result: dict[str, float] = {}
     for tag, value in state.get("inbound_offsets", {}).items():
@@ -85,6 +80,31 @@ def tracked_inbounds(state: dict | None = None) -> dict[str, float]:
     return result
 
 
+def legacy_absolute_ratios(state: dict | None = None) -> dict[str, float]:
+    """Read v1 absolute Host ratios until the API migrates state to offsets."""
+    state = state or load_state()
+    result: dict[str, float] = {}
+    legacy = state.get("inbound_ratios", {})
+    if not isinstance(legacy, dict):
+        return result
+    for tag, value in legacy.items():
+        if not isinstance(tag, str) or not tag:
+            continue
+        try:
+            ratio = float(value)
+        except (TypeError, ValueError):
+            continue
+        if ratio < 0:
+            continue
+        result[tag] = ratio
+    return result
+
+
+def tracked_inbound_tags(state: dict | None = None) -> tuple[str, ...]:
+    state = state or load_state()
+    return tuple(dict.fromkeys((*tracked_inbounds(state).keys(), *legacy_absolute_ratios(state).keys())))
+
+
 def alias_email(uid: int | str, inbound_tag: str) -> str:
     return f"{int(uid)}~hspg~{inbound_key(inbound_tag)}"
 
@@ -96,14 +116,18 @@ def _clone_proto_user(proto_user):
 
 
 def expand_proto_users(proto_users: Iterable) -> list:
-    """Split overridden inbounds into stat-attributable aliases."""
+    """Split overridden inbounds into stat-attributable aliases.
+
+    v2 state stores Node-relative offsets. During an upgrade, v1 absolute
+    ratios are also honored until ``/api/hs-plugin/state`` migrates the file.
+    """
     state = load_state()
-    offsets = tracked_inbounds(state)
-    if not offsets:
+    tags = tracked_inbound_tags(state)
+    if not tags:
         return list(proto_users)
 
     enabled = host_ratio_enabled(state)
-    tags = tuple(offsets)
+    tracked = set(tags)
     output = []
     for user in proto_users:
         original_inbounds = list(user.inbounds)
@@ -111,7 +135,7 @@ def expand_proto_users(proto_users: Iterable) -> list:
 
         base = _clone_proto_user(user)
         if enabled:
-            kept = [tag for tag in original_inbounds if tag not in offsets]
+            kept = [tag for tag in original_inbounds if tag not in tracked]
             del base.inbounds[:]
             base.inbounds.extend(kept)
         output.append(base)
@@ -126,14 +150,15 @@ def expand_proto_users(proto_users: Iterable) -> list:
     return output
 
 
-def decode_usage_identity(name: str) -> tuple[int, float | None]:
-    """Return ``(user_id, host_ratio_offset)`` for a stat identity.
+def decode_usage_identity(name: str) -> tuple[int, float | None, float | None]:
+    """Return ``(user_id, host_offset, legacy_absolute_ratio)``.
 
-    Native identities return ``None``. HS aliases return an additive offset that
-    PasarGuard applies on top of the *actual* Node coefficient for that stat.
+    Native identities return no HS values. v2 aliases return an additive offset
+    over the actual Node coefficient. v1 aliases return an absolute final ratio
+    so accounting remains correct during a rolling plugin upgrade.
     """
     try:
-        return int(name), None
+        return int(name), None, None
     except (TypeError, ValueError):
         pass
 
@@ -142,24 +167,29 @@ def decode_usage_identity(name: str) -> tuple[int, float | None]:
         raise ValueError(f"unknown HS usage identity: {name}")
 
     state = load_state()
-    offsets = tracked_inbounds(state)
     key = match.group("key")
-    matched_offset = None
-    for tag, offset in offsets.items():
-        if inbound_key(tag) == key:
-            matched_offset = offset
-            break
-    if matched_offset is None:
-        raise ValueError(f"stale HS usage identity: {name}")
+    offsets = tracked_inbounds(state)
+    legacy = legacy_absolute_ratios(state)
 
-    host_offset = matched_offset if host_ratio_enabled(state) else None
-    return int(match.group("uid")), host_offset
+    if host_ratio_enabled(state):
+        for tag, offset in offsets.items():
+            if inbound_key(tag) == key:
+                return int(match.group("uid")), offset, None
+        for tag, ratio in legacy.items():
+            if inbound_key(tag) == key:
+                return int(match.group("uid")), None, ratio
+    else:
+        for tag in tracked_inbound_tags(state):
+            if inbound_key(tag) == key:
+                return int(match.group("uid")), None, None
+
+    raise ValueError(f"stale HS usage identity: {name}")
 
 
 def usage_emails_for_user(uid: int | str) -> list[str]:
     """Identities that can represent a user in online/IP statistics."""
     uid = int(uid)
     emails = [str(uid)]
-    for tag in tracked_inbounds():
+    for tag in tracked_inbound_tags():
         emails.append(alias_email(uid, tag))
     return emails
