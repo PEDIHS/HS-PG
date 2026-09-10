@@ -38,9 +38,9 @@ class RatioBody(BaseModel):
 
 def _default_state() -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "features": {"host_usage_ratio": {"enabled": True}},
-        "inbound_ratios": {},
+        "inbound_offsets": {},
         "updated_at": None,
     }
 
@@ -54,7 +54,7 @@ def _load_state() -> dict:
         value = _default_state()
     value.setdefault("version", 1)
     value.setdefault("features", {}).setdefault("host_usage_ratio", {"enabled": True})
-    value.setdefault("inbound_ratios", {})
+    value.setdefault("inbound_offsets", {})
     return value
 
 
@@ -117,14 +117,6 @@ async def _node_rows(db: AsyncSession) -> list[dict]:
 
 
 def _resolve_inherited_node_ratio(host_addresses, nodes: list[dict]) -> tuple[float, int | None, str]:
-    """Best-effort mapping from a Host to the Node coefficient it inherits.
-
-    PasarGuard does not store a direct Host -> Node foreign key. We therefore
-    use an exact normalized address match when possible. With one Node (or when
-    every Node has the same coefficient) inheritance is unambiguous anyway.
-    Accounting itself does not depend on this heuristic: native traffic always
-    uses the actual Node coefficient where the traffic was observed.
-    """
     normalized_hosts = {_normalize_address(x) for x in (host_addresses or []) if _normalize_address(x)}
     matched = [n for n in nodes if _normalize_address(n.get("address")) in normalized_hosts]
     if len(matched) == 1:
@@ -142,6 +134,47 @@ def _resolve_inherited_node_ratio(host_addresses, nodes: list[dict]) -> tuple[fl
     return 1.0, None, "unresolved"
 
 
+async def _migrate_legacy_ratios(db: AsyncSession, state: dict) -> dict:
+    """Convert v1 absolute Host ratios into v2 Node-relative offsets."""
+    if int(state.get("version", 1) or 1) >= 2 and "inbound_ratios" not in state:
+        state.setdefault("inbound_offsets", {})
+        return state
+
+    legacy = state.get("inbound_ratios", {})
+    offsets = state.setdefault("inbound_offsets", {})
+    if isinstance(legacy, dict) and legacy:
+        nodes = await _node_rows(db)
+        rows = (
+            await db.execute(
+                select(ProxyHost.inbound_tag, ProxyHost.address)
+                .where(ProxyHost.inbound_tag.is_not(None))
+                .order_by(ProxyHost.id.asc())
+            )
+        ).all()
+        first_addresses: dict[str, object] = {}
+        for inbound_tag, addresses in rows:
+            if inbound_tag and inbound_tag not in first_addresses:
+                first_addresses[inbound_tag] = addresses
+
+        for inbound_tag, final_ratio in legacy.items():
+            if not isinstance(inbound_tag, str) or not inbound_tag:
+                continue
+            try:
+                final_ratio = float(final_ratio)
+            except (TypeError, ValueError):
+                continue
+            inherited, _node_id, _source = _resolve_inherited_node_ratio(first_addresses.get(inbound_tag), nodes)
+            offset = final_ratio - inherited
+            if abs(offset) >= 1e-9:
+                offsets[inbound_tag] = offset
+
+    state.pop("inbound_ratios", None)
+    state["version"] = 2
+    with _write_lock():
+        _save_state(state)
+    return state
+
+
 async def _host_rows(db: AsyncSession, state: dict) -> list[dict]:
     rows = (
         await db.execute(
@@ -154,25 +187,27 @@ async def _host_rows(db: AsyncSession, state: dict) -> list[dict]:
         if inbound_tag:
             shared.setdefault(inbound_tag, []).append(int(host_id))
 
-    ratios = state.get("inbound_ratios", {})
+    offsets = state.get("inbound_offsets", {})
     result = []
     for host_id, remark, inbound_tag, addresses in rows:
         inherited_ratio, inherited_node_id, inherited_source = _resolve_inherited_node_ratio(addresses, nodes)
-        override = ratios.get(inbound_tag) if inbound_tag else None
+        raw_offset = offsets.get(inbound_tag, 0.0) if inbound_tag else 0.0
         try:
-            override_ratio = float(override) if override is not None else None
+            offset = float(raw_offset)
         except (TypeError, ValueError):
-            override_ratio = None
+            offset = 0.0
+        effective_ratio = max(0.0, inherited_ratio + offset)
         result.append(
             {
                 "id": int(host_id),
                 "remark": remark,
                 "inbound_tag": inbound_tag,
-                "usage_ratio": override_ratio if override_ratio is not None else inherited_ratio,
+                "usage_ratio": effective_ratio,
                 "node_usage_ratio": inherited_ratio,
+                "usage_ratio_offset": offset,
                 "node_id": inherited_node_id,
                 "node_ratio_source": inherited_source,
-                "is_overridden": override_ratio is not None,
+                "is_overridden": abs(offset) >= 1e-9,
                 "shared_host_ids": shared.get(inbound_tag, []) if inbound_tag else [],
                 "shared_inbound": bool(inbound_tag and len(shared.get(inbound_tag, [])) > 1),
             }
@@ -185,17 +220,17 @@ async def get_state(
     db: AsyncSession = Depends(get_db),
     _owner: AdminDetails = Depends(_require_owner),
 ):
-    state = _load_state()
+    state = await _migrate_legacy_ratios(db, _load_state())
     return {
-        "version": state.get("version", 1),
+        "version": state.get("version", 2),
         "features": state.get("features", {}),
         "updated_at": state.get("updated_at"),
         "hosts": await _host_rows(db, state),
         "accounting": {
             "mode": "per-inbound-attribution",
             "shared_inbound_policy": "same-ratio",
-            "host_ratio_semantics": "final-effective-ratio",
-            "effective_formula": "raw_usage * (host_ratio_override if set else actual_node_usage_ratio)",
+            "host_ratio_semantics": "node-relative-offset",
+            "effective_formula": "raw_usage * max(0, actual_node_usage_ratio + host_ratio_offset)",
         },
     }
 
@@ -240,28 +275,29 @@ async def set_host_usage_ratio(
     )
     nodes = await _node_rows(db)
     inherited_ratio, inherited_node_id, inherited_source = _resolve_inherited_node_ratio(row.address, nodes)
+    offset = float(body.ratio) - inherited_ratio
 
-    # Equal to the inherited Node ratio means "follow Node" rather than storing
-    # a redundant override. Future Node coefficient changes then stay in sync.
-    follows_node = inherited_source != "unresolved" and abs(float(body.ratio) - inherited_ratio) < 1e-9
+    state = await _migrate_legacy_ratios(db, _load_state())
     with _write_lock():
-        state = _load_state()
-        ratios = state.setdefault("inbound_ratios", {})
-        if follows_node:
-            ratios.pop(inbound_tag, None)
+        offsets = state.setdefault("inbound_offsets", {})
+        if abs(offset) < 1e-9:
+            offsets.pop(inbound_tag, None)
+            offset = 0.0
         else:
-            ratios[inbound_tag] = float(body.ratio)
+            offsets[inbound_tag] = offset
+        state["version"] = 2
         _save_state(state)
 
     return {
         "ok": True,
         "host_id": host_id,
         "inbound_tag": inbound_tag,
-        "usage_ratio": inherited_ratio if follows_node else float(body.ratio),
+        "usage_ratio": max(0.0, inherited_ratio + offset),
         "node_usage_ratio": inherited_ratio,
+        "usage_ratio_offset": offset,
         "node_id": inherited_node_id,
         "node_ratio_source": inherited_source,
-        "is_overridden": not follows_node,
+        "is_overridden": abs(offset) >= 1e-9,
         "affected_host_ids": [int(x) for x in sibling_ids],
         "shared_inbound": len(sibling_ids) > 1,
         "requires_resync": True,
