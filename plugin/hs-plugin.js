@@ -42,10 +42,13 @@
   function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
   function setStatus(text, kind=''){const el=document.querySelector(`#${ROOT_ID} .hs-status`);if(el){el.textContent=text;el.className=`hs-status ${kind}`}}
 
-  async function refreshState(){try{state=await api('/state');ownerAllowed=true;ownerResolved=true;return state}catch(e){ownerResolved=true;ownerAllowed=false;state=null;return null}}
+  async function refreshState(){
+    try{state=await api('/state');ownerAllowed=true;ownerResolved=true;return state}
+    catch(e){ownerResolved=true;ownerAllowed=false;state=null;return null}
+  }
 
   function findNodeTopItem(){
-    const links=[...document.querySelectorAll('a')].filter(a=>{const h=a.getAttribute('href')||'';return h==='/nodes'||h==='#/nodes'||h.endsWith('#/nodes')});
+    const links=[...document.querySelectorAll('a')].filter(a=>/^(#)?\/nodes\/?$/.test((a.getAttribute('href')||'').replace(/^.*#/, '#').replace('#','')) || (a.getAttribute('href')||'').endsWith('#/nodes'));
     const link=links[0]; if(!link)return null;
     let li=link.closest('li');
     while(li?.parentElement?.closest('li')) li=li.parentElement.closest('li');
@@ -79,12 +82,14 @@
     root.innerHTML=`<div class="hs-hero"><div><h2 class="hs-title hs-gold">HS Plugin</h2><div class="hs-sub">Update-safe extensions for PasarGuard · feature modules are isolated from the core.</div></div><span class="hs-version">v${VERSION}</span></div><div class="hs-card"><div class="hs-card-head"><div><div class="hs-card-title">Host Usage Ratio</div><div class="hs-note">Applies a traffic multiplier per Host/inbound before PasarGuard's native Node Usage Ratio. Hosts sharing one inbound must share the same ratio.</div></div><input id="hs-feature-host-ratio" class="hs-toggle" type="checkbox" ${enabled?'checked':''}></div><div class="hs-hosts">${hostRows()}</div><div class="hs-status"></div></div>`;
     root.querySelector('#hs-feature-host-ratio')?.addEventListener('change',async e=>{
       if(busy)return;busy=true;e.target.disabled=true;setStatus('Applying feature state and syncing nodes…');
-      try{await api('/features/host_usage_ratio',{method:'PUT',body:JSON.stringify({enabled:e.target.checked})});await api('/resync',{method:'POST',body:'{}'});await refreshState();render()}catch(err){setStatus(err.message,'err');e.target.checked=!e.target.checked}finally{busy=false;e.target.disabled=false}
+      try{await api('/features/host_usage_ratio',{method:'PUT',body:JSON.stringify({enabled:e.target.checked})});await api('/resync',{method:'POST',body:'{}'});await refreshState();setStatus('Applied successfully.','ok');render()}
+      catch(err){setStatus(err.message,'err');e.target.checked=!e.target.checked}finally{busy=false;e.target.disabled=false}
     });
     root.querySelectorAll('.hs-save-ratio').forEach(btn=>btn.addEventListener('click',async()=>{
       if(busy)return;const row=btn.closest('.hs-host');const input=row.querySelector('.hs-ratio');const hostId=Number(row.dataset.hostId);const ratio=Number(input.value);if(!Number.isFinite(ratio)||ratio<0||ratio>100){setStatus('Ratio must be between 0 and 100.','err');return}
       busy=true;btn.disabled=true;setStatus(`Saving Host #${hostId} and syncing nodes…`);
-      try{await api(`/hosts/${hostId}/usage-ratio`,{method:'PUT',body:JSON.stringify({ratio})});await api('/resync',{method:'POST',body:'{}'});await refreshState();render()}catch(err){setStatus(err.message,'err')}finally{busy=false;btn.disabled=false}
+      try{const out=await api(`/hosts/${hostId}/usage-ratio`,{method:'PUT',body:JSON.stringify({ratio})});await api('/resync',{method:'POST',body:'{}'});await refreshState();setStatus(out.shared_inbound?`Saved. Same ratio was applied to Hosts ${out.affected_host_ids.join(', ')} because they share an inbound.`:'Saved and applied.','ok');render()}
+      catch(err){setStatus(err.message,'err')}finally{busy=false;btn.disabled=false}
     }));
   }
 
@@ -92,14 +97,15 @@
 
   function matchEditingHost(dialog){
     if(!state?.hosts?.length)return null;
-    const values=[...dialog.querySelectorAll('input')].map(i=>i.value).filter(Boolean);
-    const candidates=state.hosts.filter(h=>values.includes(String(h.remark||'')));
+    const remark=dialog.querySelector('input[name="remark"]')?.value;
+    if(!remark)return null;
+    const candidates=state.hosts.filter(h=>String(h.remark||'')===remark);
     return candidates.length===1?candidates[0]:null;
   }
 
   function injectHostField(dialog){
     if(!ownerAllowed||!state?.features?.host_usage_ratio?.enabled||dialog.querySelector(`#${HOST_FIELD_ID}`))return;
-    const form=dialog.querySelector('form');if(!form)return;
+    const form=dialog.querySelector('form');if(!form||!form.querySelector('input[name="remark"]'))return;
     const scroll=[...form.querySelectorAll('div')].find(el=>el.children.length>1 && /overflow-y-auto/.test(el.className||''));
     const container=scroll||form;const first=container.firstElementChild;if(!first)return;
     const editing=matchEditingHost(dialog);const ratio=Number(editing?.usage_ratio??1);
@@ -117,7 +123,10 @@
       const field=document.querySelector(`#${HOST_FIELD_ID}[data-dirty="1"]`);const pending=field?{ratio:Number(field.querySelector('input')?.value),hostId:Number(field.dataset.hostId||0)}:null;
       const response=await nativeFetch(input,init);
       if(response.ok && pending && Number.isFinite(pending.ratio) && ((method==='POST'&&/\/api\/host\/?(?:\?|$)/.test(requestUrl))||(method==='PUT'&&/\/api\/host\/\d+/.test(requestUrl)))){
-        try{const payload=await response.clone().json();const hostId=Number(payload?.id||pending.hostId);if(hostId){await nativeFetch(`/api/hs-plugin/hosts/${hostId}/usage-ratio`,{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ratio:pending.ratio})});await nativeFetch('/api/hs-plugin/resync',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'});field.dataset.dirty='0';refreshState().catch(()=>{})}}catch(_){}}
+        try{
+          const payload=await response.clone().json();const hostId=Number(payload?.id||pending.hostId);if(hostId){await nativeFetch(`/api/hs-plugin/hosts/${hostId}/usage-ratio`,{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ratio:pending.ratio})});await nativeFetch('/api/hs-plugin/resync',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'});field.dataset.dirty='0';refreshState().catch(()=>{})}
+        }catch(_){/* Native Host save must never fail because the plugin follow-up failed. */}
+      }
       return response;
     };
   }
