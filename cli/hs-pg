@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="${HS_ROOT:-/opt/hs-pg}"
+DATA="${HS_PLUGIN_DATA_DIR:-/var/lib/pasarguard/hs-plugin}"
+COMPOSE="${PASARGUARD_ROOT:-/opt/pasarguard}/docker-compose.yml"
+PROJECT="${PASARGUARD_COMPOSE_PROJECT:-pasarguard}"
+cmd="${1:-status}"
+case "$cmd" in
+  apply|integrate)
+    exec "$ROOT/plugin/integrate-dashboard.sh"
+    ;;
+  restart|restart-backend)
+    "$ROOT/plugin/integrate-dashboard.sh"
+    if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && [[ -f "$COMPOSE" ]]; then
+      mapfile -t ids < <(docker compose -f "$COMPOSE" -p "$PROJECT" ps -q)
+      restarted=0
+      for cid in "${ids[@]}"; do
+        image="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null || true)"
+        [[ "$image" == *pasarguard/panel* ]] || continue
+        docker restart "$cid" >/dev/null
+        restarted=$((restarted+1))
+      done
+      echo "[HS Plugin] restarted $restarted PasarGuard container(s)"
+    elif command -v systemctl >/dev/null 2>&1; then
+      systemctl restart pasarguard
+    else
+      echo "[HS Plugin] could not detect a managed PasarGuard service" >&2; exit 1
+    fi
+    ;;
+  status)
+    echo "HS Plugin root: $ROOT"
+    echo "State: $DATA/state.json"
+    [[ -f "$DATA/state.json" ]] && cat "$DATA/state.json" || echo '{"status":"not configured yet"}'
+    if command -v systemctl >/dev/null 2>&1; then systemctl --no-pager --full status hs-pg-integrator.timer 2>/dev/null | sed -n '1,8p' || true; fi
+    ;;
+  update)
+    exec bash <(curl -fsSL "https://raw.githubusercontent.com/PEDIHS/HS-PG/main/install.sh") --update
+    ;;
+  *)
+    echo "Usage: hs-pg {status|apply|restart|update}" >&2; exit 2
+    ;;
+esac
