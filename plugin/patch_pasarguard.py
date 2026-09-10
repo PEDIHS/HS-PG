@@ -28,7 +28,6 @@ def _strip_marked_block(text: str, start: str, end: str) -> str:
 
 
 def _routers_assignment_end(text: str) -> int:
-    """Return character offset immediately after the ``routers = [...]`` assignment."""
     try:
         tree = ast.parse(text)
     except SyntaxError as exc:
@@ -49,7 +48,6 @@ def _routers_assignment_end(text: str) -> int:
 
 
 def patch_router(text: str) -> str:
-    """Register HS router without owning or rewriting PasarGuard's router loop."""
     import_start = "# hs-plugin-router-start"
     import_end = "# hs-plugin-router-end"
     register_start = "# hs-plugin-router-register-start"
@@ -150,12 +148,11 @@ def patch_sync(text: str) -> str:
 
 
 def patch_usage(text: str) -> str:
-    """Patch usage accounting so Host Ratio is the final effective coefficient.
+    """Patch usage accounting so Host Ratio tracks Node Ratio by an offset.
 
-    Native traffic keeps PasarGuard's Node ``usage_coefficient``. HS aliases
-    carry an ``hs_effective_ratio`` value; every place that normally multiplies
-    by the node coefficient instead uses that value. This prevents accidental
-    multiplication such as Node 2 × Host 2.7 = 5.4.
+    Example: Node 2.0 and Host 2.7 stores +0.7. For traffic observed on that
+    node the effective coefficient is ``2.0 + 0.7 = 2.7``. If Node later moves
+    to 3.0 the Host automatically becomes 3.7.
     """
     text = ensure_import(
         text,
@@ -172,7 +169,7 @@ def patch_usage(text: str) -> str:
         except ValueError, TypeError:
             invalid_uids.append(uid)
 '''
-    legacy = '''    validated_params = []
+    legacy_multiply = '''    validated_params = []
     invalid_uids = []
     for uid, value in params.items():
         try:
@@ -182,7 +179,7 @@ def patch_usage(text: str) -> str:
         except (ValueError, TypeError):
             invalid_uids.append(uid)
 '''
-    desired = '''    validated_params = []
+    previous_effective = '''    validated_params = []
     invalid_uids = []
     for uid, value in params.items():
         try:
@@ -195,26 +192,55 @@ def patch_usage(text: str) -> str:
         except (ValueError, TypeError):
             invalid_uids.append(uid)
 '''
+    desired = '''    validated_params = []
+    invalid_uids = []
+    for uid, value in params.items():
+        try:
+            # hs-plugin-usage: Host Ratio stays synchronized as an offset from Node Ratio.
+            native_uid, host_offset = decode_usage_identity(uid)
+            param = {"uid": native_uid, "value": value}
+            if host_offset is not None:
+                param["hs_ratio_offset"] = host_offset
+            validated_params.append(param)
+        except (ValueError, TypeError):
+            invalid_uids.append(uid)
+'''
 
     if desired not in text:
-        if legacy in text:
-            text = text.replace(legacy, desired, 1)
+        if previous_effective in text:
+            text = text.replace(previous_effective, desired, 1)
+        elif legacy_multiply in text:
+            text = text.replace(legacy_multiply, desired, 1)
         else:
             text = replace_once(text, original, desired, "record usage identity")
 
-    old_param = 'value = int(param["value"] * coeff)'
-    new_param = 'value = int(param["value"] * param.get("hs_effective_ratio", coeff))'
-    if old_param in text:
-        text = text.replace(old_param, new_param)
-    elif new_param not in text:
-        raise RuntimeError("usage coefficient anchors not found")
+    old_expressions = [
+        'value = int(param["value"] * coeff)',
+        'value = int(param["value"] * param.get("hs_effective_ratio", coeff))',
+    ]
+    new_expression = 'value = int(param["value"] * max(0.0, coeff + param.get("hs_ratio_offset", 0.0)))'
+    if new_expression not in text:
+        replaced = False
+        for old in old_expressions:
+            if old in text:
+                text = text.replace(old, new_expression)
+                replaced = True
+        if not replaced:
+            raise RuntimeError("usage coefficient anchors not found")
 
-    old_p = '"value": int(p["value"] * coeff),'
-    new_p = '"value": int(p["value"] * p.get("hs_effective_ratio", coeff)),'
-    if old_p in text:
-        text = text.replace(old_p, new_p)
-    elif new_p not in text:
-        raise RuntimeError("node usage log coefficient anchor not found")
+    old_p_expressions = [
+        '"value": int(p["value"] * coeff),',
+        '"value": int(p["value"] * p.get("hs_effective_ratio", coeff)),',
+    ]
+    new_p_expression = '"value": int(p["value"] * max(0.0, coeff + p.get("hs_ratio_offset", 0.0))),'
+    if new_p_expression not in text:
+        replaced = False
+        for old in old_p_expressions:
+            if old in text:
+                text = text.replace(old, new_p_expression)
+                replaced = True
+        if not replaced:
+            raise RuntimeError("node usage log coefficient anchor not found")
 
     return text
 
