@@ -1,0 +1,7 @@
+[Unit]
+Description=HS Plugin integration guard for PasarGuard
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/hs-pg/plugin/integrate-dashboard.sh
