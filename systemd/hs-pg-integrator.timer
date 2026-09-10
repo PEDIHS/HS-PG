@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic HS Plugin/PasarGuard compatibility check
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=3min
+AccuracySec=20s
+Unit=hs-pg-integrator.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
