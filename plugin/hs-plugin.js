@@ -1,17 +1,19 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.1.1';
   const NAV_ID = 'hs-plugin-nav';
   const ROOT_ID = 'hs-plugin-root';
   const STYLE_ID = 'hs-plugin-style';
   const HOST_FIELD_ID = 'hs-host-usage-ratio';
+  const rawFetch = window.fetch.bind(window);
+
   let state = null;
   let ownerAllowed = false;
-  let ownerResolved = false;
   let active = false;
   let busy = false;
   let queued = false;
+  let lastError = null;
 
   const css = `
     @keyframes hsGoldSweep{0%{background-position:180% 50%}100%{background-position:-80% 50%}}
@@ -38,34 +40,52 @@
   `;
 
   function injectStyle(){if(document.getElementById(STYLE_ID))return;const s=document.createElement('style');s.id=STYLE_ID;s.textContent=css;document.head.appendChild(s)}
-  function api(path, options={}){return fetch(`/api/hs-plugin${path}`,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(options.headers||{})},...options}).then(async r=>{const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.detail||`HTTP ${r.status}`);return data})}
+
+  function authHeaders(extra){
+    const headers=new Headers(extra||{});
+    if(!headers.has('Content-Type'))headers.set('Content-Type','application/json');
+    const token=localStorage.getItem('token');
+    if(token&&!headers.has('Authorization'))headers.set('Authorization',`Bearer ${token}`);
+    return headers;
+  }
+
+  async function api(path, options={}){
+    const {headers,...rest}=options;
+    const response=await rawFetch(`/api/hs-plugin${path}`,{credentials:'same-origin',...rest,headers:authHeaders(headers)});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok){const error=new Error(data.detail||`HTTP ${response.status}`);error.status=response.status;throw error}
+    return data;
+  }
+
   function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
-  function setStatus(text, kind=''){const el=document.querySelector(`#${ROOT_ID} .hs-status`);if(el){el.textContent=text;el.className=`hs-status ${kind}`}}
+  function setStatus(text,kind=''){const el=document.querySelector(`#${ROOT_ID} .hs-status`);if(el){el.textContent=text;el.className=`hs-status ${kind}`}}
 
   async function refreshState(){
-    try{state=await api('/state');ownerAllowed=true;ownerResolved=true;return state}
-    catch(e){ownerResolved=true;ownerAllowed=false;state=null;return null}
+    try{state=await api('/state');ownerAllowed=true;lastError=null;return state}
+    catch(error){lastError=error;ownerAllowed=false;state=null;console.warn('[HS Plugin] state request failed',error);return null}
   }
 
   function findNodeTopItem(){
-    const links=[...document.querySelectorAll('a')].filter(a=>/^(#)?\/nodes\/?$/.test((a.getAttribute('href')||'').replace(/^.*#/, '#').replace('#','')) || (a.getAttribute('href')||'').endsWith('#/nodes'));
-    const link=links[0]; if(!link)return null;
+    const link=[...document.querySelectorAll('a')].find(a=>{const href=a.getAttribute('href')||'';return href==='/nodes'||href==='#/nodes'||href.endsWith('#/nodes')});
+    if(!link)return null;
     let li=link.closest('li');
-    while(li?.parentElement?.closest('li')) li=li.parentElement.closest('li');
+    if(!li)return null;
+    let parent=li.parentElement?.closest('li');
+    while(parent){li=parent;parent=li.parentElement?.closest('li')}
     return li;
   }
 
   function ensureNav(){
     if(!ownerAllowed){document.getElementById(NAV_ID)?.remove();return}
     if(document.getElementById(NAV_ID))return;
-    const nodeItem=findNodeTopItem(); if(!nodeItem||!nodeItem.parentElement)return;
+    const nodeItem=findNodeTopItem();if(!nodeItem||!nodeItem.parentElement)return;
     const li=document.createElement('li');li.id=NAV_ID;li.className=nodeItem.className||'';
     const btn=document.createElement('button');btn.type='button';btn.className='peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-hidden transition-[width,height,padding] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground';
     btn.innerHTML='<span class="hs-spark"></span><span class="hs-gold" style="font-weight:750">HS Plugin</span>';
-    btn.addEventListener('click',()=>activate());li.appendChild(btn);nodeItem.after(li);
+    btn.addEventListener('click',activate);li.appendChild(btn);nodeItem.after(li);
   }
 
-  function getMain(){return document.querySelector('main') || document.querySelector('[role="main"]')}
+  function getMain(){return document.querySelector('main')||document.querySelector('[role="main"]')}
   function hideMain(main){[...main.children].forEach(el=>{if(el.id===ROOT_ID)return;if(!el.hasAttribute('data-hs-prev-display'))el.setAttribute('data-hs-prev-display',el.style.display||'');el.style.display='none'})}
   function restoreMain(main){[...main.querySelectorAll(':scope > [data-hs-prev-display]')].forEach(el=>{el.style.display=el.getAttribute('data-hs-prev-display')||'';el.removeAttribute('data-hs-prev-display')})}
   function deactivate(){active=false;const main=getMain();if(main)restoreMain(main);document.getElementById(ROOT_ID)?.remove()}
@@ -79,34 +99,33 @@
     const main=getMain();if(!main)return;hideMain(main);
     let root=document.getElementById(ROOT_ID);if(!root){root=document.createElement('section');root.id=ROOT_ID;main.appendChild(root)}
     const enabled=!!state?.features?.host_usage_ratio?.enabled;
-    root.innerHTML=`<div class="hs-hero"><div><h2 class="hs-title hs-gold">HS Plugin</h2><div class="hs-sub">Update-safe extensions for PasarGuard · feature modules are isolated from the core.</div></div><span class="hs-version">v${VERSION}</span></div><div class="hs-card"><div class="hs-card-head"><div><div class="hs-card-title">Host Usage Ratio</div><div class="hs-note">Applies a traffic multiplier per Host/inbound before PasarGuard's native Node Usage Ratio. Hosts sharing one inbound must share the same ratio.</div></div><input id="hs-feature-host-ratio" class="hs-toggle" type="checkbox" ${enabled?'checked':''}></div><div class="hs-hosts">${hostRows()}</div><div class="hs-status"></div></div>`;
+    root.innerHTML=`<div class="hs-hero"><div><h2 class="hs-title hs-gold">HS Plugin</h2><div class="hs-sub">Update-safe extensions for PasarGuard · authenticated through the active panel session.</div></div><span class="hs-version">v${VERSION}</span></div><div class="hs-card"><div class="hs-card-head"><div><div class="hs-card-title">Host Usage Ratio</div><div class="hs-note">Applies a traffic multiplier per Host/inbound before PasarGuard's native Node Usage Ratio. Hosts sharing one inbound must share the same ratio.</div></div><input id="hs-feature-host-ratio" class="hs-toggle" type="checkbox" ${enabled?'checked':''}></div><div class="hs-hosts">${hostRows()}</div><div class="hs-status"></div></div>`;
     root.querySelector('#hs-feature-host-ratio')?.addEventListener('change',async e=>{
       if(busy)return;busy=true;e.target.disabled=true;setStatus('Applying feature state and syncing nodes…');
-      try{await api('/features/host_usage_ratio',{method:'PUT',body:JSON.stringify({enabled:e.target.checked})});await api('/resync',{method:'POST',body:'{}'});await refreshState();setStatus('Applied successfully.','ok');render()}
+      try{await api('/features/host_usage_ratio',{method:'PUT',body:JSON.stringify({enabled:e.target.checked})});await api('/resync',{method:'POST',body:'{}'});await refreshState();render()}
       catch(err){setStatus(err.message,'err');e.target.checked=!e.target.checked}finally{busy=false;e.target.disabled=false}
     });
     root.querySelectorAll('.hs-save-ratio').forEach(btn=>btn.addEventListener('click',async()=>{
-      if(busy)return;const row=btn.closest('.hs-host');const input=row.querySelector('.hs-ratio');const hostId=Number(row.dataset.hostId);const ratio=Number(input.value);if(!Number.isFinite(ratio)||ratio<0||ratio>100){setStatus('Ratio must be between 0 and 100.','err');return}
+      if(busy)return;const row=btn.closest('.hs-host');const input=row.querySelector('.hs-ratio');const hostId=Number(row.dataset.hostId);const ratio=Number(input.value);
+      if(!Number.isFinite(ratio)||ratio<0||ratio>100){setStatus('Ratio must be between 0 and 100.','err');return}
       busy=true;btn.disabled=true;setStatus(`Saving Host #${hostId} and syncing nodes…`);
-      try{const out=await api(`/hosts/${hostId}/usage-ratio`,{method:'PUT',body:JSON.stringify({ratio})});await api('/resync',{method:'POST',body:'{}'});await refreshState();setStatus(out.shared_inbound?`Saved. Same ratio was applied to Hosts ${out.affected_host_ids.join(', ')} because they share an inbound.`:'Saved and applied.','ok');render()}
+      try{await api(`/hosts/${hostId}/usage-ratio`,{method:'PUT',body:JSON.stringify({ratio})});await api('/resync',{method:'POST',body:'{}'});await refreshState();render()}
       catch(err){setStatus(err.message,'err')}finally{busy=false;btn.disabled=false}
     }));
   }
 
-  async function activate(){active=true;if(!state)await refreshState();if(!ownerAllowed)return;render()}
+  async function activate(){active=true;if(!state)await refreshState();if(!ownerAllowed){console.warn('[HS Plugin] unavailable',lastError);return}render()}
 
   function matchEditingHost(dialog){
     if(!state?.hosts?.length)return null;
-    const remark=dialog.querySelector('input[name="remark"]')?.value;
-    if(!remark)return null;
-    const candidates=state.hosts.filter(h=>String(h.remark||'')===remark);
-    return candidates.length===1?candidates[0]:null;
+    const remark=dialog.querySelector('input[name="remark"]')?.value;if(!remark)return null;
+    const candidates=state.hosts.filter(h=>String(h.remark||'')===remark);return candidates.length===1?candidates[0]:null;
   }
 
   function injectHostField(dialog){
     if(!ownerAllowed||!state?.features?.host_usage_ratio?.enabled||dialog.querySelector(`#${HOST_FIELD_ID}`))return;
     const form=dialog.querySelector('form');if(!form||!form.querySelector('input[name="remark"]'))return;
-    const scroll=[...form.querySelectorAll('div')].find(el=>el.children.length>1 && /overflow-y-auto/.test(el.className||''));
+    const scroll=[...form.querySelectorAll('div')].find(el=>el.children.length>1&&/overflow-y-auto/.test(el.className||''));
     const container=scroll||form;const first=container.firstElementChild;if(!first)return;
     const editing=matchEditingHost(dialog);const ratio=Number(editing?.usage_ratio??1);
     const wrap=document.createElement('div');wrap.id=HOST_FIELD_ID;wrap.dataset.hostId=editing?.id||'';
@@ -117,15 +136,16 @@
   function scanHostDialogs(){document.querySelectorAll('[role="dialog"]').forEach(injectHostField)}
 
   function installHostSaveBridge(){
-    if(window.__hsPluginFetchBridge)return;window.__hsPluginFetchBridge=true;const nativeFetch=window.fetch.bind(window);
+    if(window.__hsPluginFetchBridge)return;window.__hsPluginFetchBridge=true;
     window.fetch=async(input,init={})=>{
       const requestUrl=typeof input==='string'?input:(input?.url||'');const method=(init.method||(input?.method)||'GET').toUpperCase();
       const field=document.querySelector(`#${HOST_FIELD_ID}[data-dirty="1"]`);const pending=field?{ratio:Number(field.querySelector('input')?.value),hostId:Number(field.dataset.hostId||0)}:null;
-      const response=await nativeFetch(input,init);
-      if(response.ok && pending && Number.isFinite(pending.ratio) && ((method==='POST'&&/\/api\/host\/?(?:\?|$)/.test(requestUrl))||(method==='PUT'&&/\/api\/host\/\d+/.test(requestUrl)))){
+      const response=await rawFetch(input,init);
+      if(response.ok&&pending&&Number.isFinite(pending.ratio)&&((method==='POST'&&/\/api\/host\/?(?:\?|$)/.test(requestUrl))||(method==='PUT'&&/\/api\/host\/\d+/.test(requestUrl)))){
         try{
-          const payload=await response.clone().json();const hostId=Number(payload?.id||pending.hostId);if(hostId){await nativeFetch(`/api/hs-plugin/hosts/${hostId}/usage-ratio`,{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ratio:pending.ratio})});await nativeFetch('/api/hs-plugin/resync',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'});field.dataset.dirty='0';refreshState().catch(()=>{})}
-        }catch(_){/* Native Host save must never fail because the plugin follow-up failed. */}
+          const payload=await response.clone().json();const hostId=Number(payload?.id||pending.hostId);
+          if(hostId){await rawFetch(`/api/hs-plugin/hosts/${hostId}/usage-ratio`,{method:'PUT',credentials:'same-origin',headers:authHeaders(),body:JSON.stringify({ratio:pending.ratio})});await rawFetch('/api/hs-plugin/resync',{method:'POST',credentials:'same-origin',headers:authHeaders(),body:'{}'});field.dataset.dirty='0';refreshState().catch(()=>{})}
+        }catch(error){console.warn('[HS Plugin] Host follow-up failed',error)}
       }
       return response;
     };
@@ -134,6 +154,13 @@
   function maintain(){queued=false;injectStyle();ensureNav();scanHostDialogs();if(active&&!document.getElementById(ROOT_ID))render()}
   function queueMaintain(){if(queued)return;queued=true;requestAnimationFrame(maintain)}
 
-  async function boot(){injectStyle();installHostSaveBridge();await refreshState();maintain();new MutationObserver(queueMaintain).observe(document.documentElement,{childList:true,subtree:true});document.addEventListener('click',e=>{if(active&&!e.target.closest(`#${NAV_ID}`)&&e.target.closest('a'))deactivate()},true);setInterval(()=>{if(ownerAllowed)refreshState().then(queueMaintain)},60000)}
+  async function boot(){
+    injectStyle();installHostSaveBridge();await refreshState();maintain();
+    new MutationObserver(queueMaintain).observe(document.documentElement,{childList:true,subtree:true});
+    document.addEventListener('click',e=>{if(active&&!e.target.closest(`#${NAV_ID}`)&&e.target.closest('a'))deactivate()},true);
+    setInterval(()=>refreshState().then(queueMaintain),60000);
+  }
+
+  window.HSPluginDebug={version:VERSION,refresh:refreshState,getState:()=>state,getError:()=>lastError};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
