@@ -1,7 +1,15 @@
 [Unit]
-Description=HS Plugin integration guard for PasarGuard
-After=docker.service
+Description=Persistent HS Plugin integration guard for PasarGuard
+After=docker.service network-online.target
+Wants=network-online.target
 
 [Service]
-Type=oneshot
-ExecStart=/opt/hs-pg/plugin/integrate-dashboard.sh
+Type=simple
+ExecStart=/bin/bash -c 'set -u; /opt/hs-pg/plugin/integrate-dashboard.sh >/dev/null 2>&1 || true; while true; do if command -v docker >/dev/null 2>&1; then docker events --filter type=container --filter event=start --format "{{.ID}}" 2>/dev/null | while read -r cid; do [ -n "$cid" ] || continue; image="$(docker inspect -f "{{.Config.Image}}" "$cid" 2>/dev/null || true)"; case "$image" in *pasarguard/panel*) for delay in 1 2 3 5 8; do sleep "$delay"; /opt/hs-pg/plugin/integrate-dashboard.sh >/dev/null 2>&1 || true; done ;; esac; done; fi; sleep 2; done'
+Restart=always
+RestartSec=2s
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
