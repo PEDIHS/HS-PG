@@ -24,9 +24,9 @@ _CACHE_STATE: dict | None = None
 
 def _default_state() -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "features": {"host_usage_ratio": {"enabled": True}},
-        "inbound_ratios": {},
+        "inbound_offsets": {},
     }
 
 
@@ -46,9 +46,9 @@ def load_state() -> dict:
             raw = _default_state()
         if not isinstance(raw, dict):
             raw = _default_state()
-        raw.setdefault("version", 1)
+        raw.setdefault("version", 2)
         raw.setdefault("features", {}).setdefault("host_usage_ratio", {"enabled": True})
-        raw.setdefault("inbound_ratios", {})
+        raw.setdefault("inbound_offsets", {})
         _CACHE_STATE = raw
         _CACHE_MTIME_NS = mtime
         return raw
@@ -64,25 +64,24 @@ def inbound_key(tag: str) -> str:
 
 
 def tracked_inbounds(state: dict | None = None) -> dict[str, float]:
-    """Return inbound -> final effective usage ratio overrides.
+    """Return inbound -> additive ratio offset from the native Node ratio.
 
-    Values here are *not* secondary multipliers. A value of 2.7 means traffic
-    attributed to that Host/Inbound must finally count as x2.7, regardless of
-    the native node coefficient. The PasarGuard usage patch applies this value
-    instead of the node coefficient for HS aliases.
+    Example: Node Ratio 2.0 and Host shown as 2.7 stores offset +0.7. Usage
+    observed on that Node is charged with 2.0 + 0.7 = 2.7. If the Node later
+    changes to 3.0, the same Host automatically becomes 3.7.
     """
     state = state or load_state()
     result: dict[str, float] = {}
-    for tag, value in state.get("inbound_ratios", {}).items():
+    for tag, value in state.get("inbound_offsets", {}).items():
         if not isinstance(tag, str) or not tag:
             continue
         try:
-            ratio = float(value)
+            offset = float(value)
         except (TypeError, ValueError):
             continue
-        if ratio < 0:
+        if abs(offset) < 1e-12:
             continue
-        result[tag] = ratio
+        result[tag] = offset
     return result
 
 
@@ -97,20 +96,14 @@ def _clone_proto_user(proto_user):
 
 
 def expand_proto_users(proto_users: Iterable) -> list:
-    """Split tracked inbounds into stat-attributable aliases.
-
-    The alias uses exactly the same proxy credentials as the original user, but
-    exists on only one tracked inbound. Xray therefore emits independent user
-    stats for that inbound. When the feature is disabled, alias tombstones are
-    still emitted so incremental node updates remove stale aliases safely.
-    """
+    """Split overridden inbounds into stat-attributable aliases."""
     state = load_state()
-    ratios = tracked_inbounds(state)
-    if not ratios:
+    offsets = tracked_inbounds(state)
+    if not offsets:
         return list(proto_users)
 
     enabled = host_ratio_enabled(state)
-    tags = tuple(ratios)
+    tags = tuple(offsets)
     output = []
     for user in proto_users:
         original_inbounds = list(user.inbounds)
@@ -118,7 +111,7 @@ def expand_proto_users(proto_users: Iterable) -> list:
 
         base = _clone_proto_user(user)
         if enabled:
-            kept = [tag for tag in original_inbounds if tag not in ratios]
+            kept = [tag for tag in original_inbounds if tag not in offsets]
             del base.inbounds[:]
             base.inbounds.extend(kept)
         output.append(base)
@@ -134,11 +127,10 @@ def expand_proto_users(proto_users: Iterable) -> list:
 
 
 def decode_usage_identity(name: str) -> tuple[int, float | None]:
-    """Return ``(user_id, effective_ratio_override)`` for a stat identity.
+    """Return ``(user_id, host_ratio_offset)`` for a stat identity.
 
-    Native PasarGuard identities return ``None`` so PasarGuard keeps applying
-    that node's own ``usage_coefficient``. HS aliases return the Host's final
-    effective ratio, which replaces (rather than multiplies) the node ratio.
+    Native identities return ``None``. HS aliases return an additive offset that
+    PasarGuard applies on top of the *actual* Node coefficient for that stat.
     """
     try:
         return int(name), None
@@ -150,18 +142,18 @@ def decode_usage_identity(name: str) -> tuple[int, float | None]:
         raise ValueError(f"unknown HS usage identity: {name}")
 
     state = load_state()
-    ratios = tracked_inbounds(state)
+    offsets = tracked_inbounds(state)
     key = match.group("key")
-    matched_ratio = None
-    for tag, ratio in ratios.items():
+    matched_offset = None
+    for tag, offset in offsets.items():
         if inbound_key(tag) == key:
-            matched_ratio = ratio
+            matched_offset = offset
             break
-    if matched_ratio is None:
+    if matched_offset is None:
         raise ValueError(f"stale HS usage identity: {name}")
 
-    effective_ratio = matched_ratio if host_ratio_enabled(state) else None
-    return int(match.group("uid")), effective_ratio
+    host_offset = matched_offset if host_ratio_enabled(state) else None
+    return int(match.group("uid")), host_offset
 
 
 def usage_emails_for_user(uid: int | str) -> list[str]:
