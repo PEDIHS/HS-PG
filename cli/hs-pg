@@ -34,7 +34,8 @@ case "$cmd" in
     if command -v systemctl >/dev/null 2>&1; then systemctl --no-pager --full status hs-pg-integrator.timer 2>/dev/null | sed -n '1,8p' || true; fi
     ;;
   update)
-    exec bash <(curl -fsSL "https://raw.githubusercontent.com/PEDIHS/HS-PG/main/install.sh") --update
+    command -v curl >/dev/null 2>&1 || { echo "[HS Plugin] curl is required for update" >&2; exit 1; }
+    curl -fsSL "https://raw.githubusercontent.com/PEDIHS/HS-PG/main/install.sh" | bash -s -- --update
     ;;
   *)
     echo "Usage: hs-pg {status|apply|restart|update}" >&2; exit 2
