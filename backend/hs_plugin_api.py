@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.db import AsyncSession, get_db
-from app.db.models import Node, ProxyHost
+from app.db.models import CoreConfig, Node, ProxyHost
 from app.models.admin import AdminDetails
 from app.models.node import NodeListQuery
 from app.operation import OperatorType
@@ -101,27 +101,82 @@ def _normalize_address(value: str | None) -> str:
     return value.strip("[]").split(":", 1)[0].rstrip(".")
 
 
+def _core_inbound_tags(config: object, excluded: object) -> set[str]:
+    if not isinstance(config, dict):
+        return set()
+    inbounds = config.get("inbounds")
+    if not isinstance(inbounds, list):
+        return set()
+    tags = {
+        str(item.get("tag"))
+        for item in inbounds
+        if isinstance(item, dict) and item.get("tag") is not None and str(item.get("tag"))
+    }
+    excluded_tags = set(excluded or [])
+    return tags - excluded_tags
+
+
 async def _node_rows(db: AsyncSession) -> list[dict]:
-    rows = (
-        await db.execute(select(Node.id, Node.name, Node.address, Node.usage_coefficient).order_by(Node.id.asc()))
+    core_rows = (
+        await db.execute(select(CoreConfig.id, CoreConfig.config, CoreConfig.exclude_inbound_tags))
     ).all()
-    return [
-        {
-            "id": int(node_id),
-            "name": name,
-            "address": address,
-            "usage_ratio": float(usage_coefficient or 1.0),
-        }
-        for node_id, name, address, usage_coefficient in rows
-    ]
+    core_tags = {
+        int(core_id): _core_inbound_tags(config, excluded)
+        for core_id, config, excluded in core_rows
+    }
+
+    rows = (
+        await db.execute(
+            select(Node.id, Node.name, Node.address, Node.usage_coefficient, Node.core_config_id)
+            .order_by(Node.id.asc())
+        )
+    ).all()
+    result = []
+    for node_id, name, address, usage_coefficient, core_config_id in rows:
+        effective_core_id = int(core_config_id) if core_config_id is not None else 1
+        result.append(
+            {
+                "id": int(node_id),
+                "name": name,
+                "address": address,
+                "usage_ratio": 1.0 if usage_coefficient is None else float(usage_coefficient),
+                "core_config_id": effective_core_id,
+                "inbound_tags": core_tags.get(effective_core_id, set()),
+            }
+        )
+    return result
 
 
-def _resolve_inherited_node_ratio(host_addresses, nodes: list[dict]) -> tuple[float, int | None, str]:
+def _resolve_inherited_node_ratio(
+    host_addresses,
+    nodes: list[dict],
+    inbound_tag: str | None = None,
+) -> tuple[float, int | None, str]:
+    """Resolve the Node ratio that should be shown as the Host baseline.
+
+    First prefer Nodes whose selected CoreConfig actually contains the Host's
+    inbound tag. This matches PasarGuard's Node->Core relation. Address and
+    single/common-ratio fallbacks cover older or unusual configurations.
+    """
+    tag_matches = [n for n in nodes if inbound_tag and inbound_tag in n.get("inbound_tags", set())]
+    candidates = tag_matches or nodes
+
     normalized_hosts = {_normalize_address(x) for x in (host_addresses or []) if _normalize_address(x)}
-    matched = [n for n in nodes if _normalize_address(n.get("address")) in normalized_hosts]
-    if len(matched) == 1:
-        node = matched[0]
-        return float(node["usage_ratio"]), int(node["id"]), "address-match"
+    address_matches = [n for n in candidates if _normalize_address(n.get("address")) in normalized_hosts]
+    if len(address_matches) == 1:
+        node = address_matches[0]
+        source = "inbound-address-match" if tag_matches else "address-match"
+        return float(node["usage_ratio"]), int(node["id"]), source
+
+    if len(tag_matches) == 1:
+        node = tag_matches[0]
+        return float(node["usage_ratio"]), int(node["id"]), "inbound-core-match"
+
+    if tag_matches:
+        distinct = {round(float(n["usage_ratio"]), 12) for n in tag_matches}
+        if len(distinct) == 1:
+            return float(tag_matches[0]["usage_ratio"]), None, "inbound-common-ratio"
+        return 1.0, None, "ambiguous-inbound-nodes"
 
     if len(nodes) == 1:
         node = nodes[0]
@@ -163,7 +218,9 @@ async def _migrate_legacy_ratios(db: AsyncSession, state: dict) -> dict:
                 final_ratio = float(final_ratio)
             except (TypeError, ValueError):
                 continue
-            inherited, _node_id, _source = _resolve_inherited_node_ratio(first_addresses.get(inbound_tag), nodes)
+            inherited, _node_id, _source = _resolve_inherited_node_ratio(
+                first_addresses.get(inbound_tag), nodes, inbound_tag
+            )
             offset = final_ratio - inherited
             if abs(offset) >= 1e-9:
                 offsets[inbound_tag] = offset
@@ -190,7 +247,9 @@ async def _host_rows(db: AsyncSession, state: dict) -> list[dict]:
     offsets = state.get("inbound_offsets", {})
     result = []
     for host_id, remark, inbound_tag, addresses in rows:
-        inherited_ratio, inherited_node_id, inherited_source = _resolve_inherited_node_ratio(addresses, nodes)
+        inherited_ratio, inherited_node_id, inherited_source = _resolve_inherited_node_ratio(
+            addresses, nodes, inbound_tag
+        )
         raw_offset = offsets.get(inbound_tag, 0.0) if inbound_tag else 0.0
         try:
             offset = float(raw_offset)
@@ -274,7 +333,14 @@ async def set_host_usage_ratio(
         ).scalars().all()
     )
     nodes = await _node_rows(db)
-    inherited_ratio, inherited_node_id, inherited_source = _resolve_inherited_node_ratio(row.address, nodes)
+    inherited_ratio, inherited_node_id, inherited_source = _resolve_inherited_node_ratio(
+        row.address, nodes, inbound_tag
+    )
+    if inherited_source in {"ambiguous-inbound-nodes", "unresolved"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot determine a unique Node Usage Ratio baseline for this Host/inbound",
+        )
     offset = float(body.ratio) - inherited_ratio
 
     state = await _migrate_legacy_ratios(db, _load_state())
