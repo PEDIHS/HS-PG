@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import re
 import shutil
 from pathlib import Path
 
@@ -20,29 +22,81 @@ def ensure_import(text: str, import_line: str, anchor: str, label: str) -> str:
     return replace_once(text, anchor, anchor + import_line, label)
 
 
+def _strip_marked_block(text: str, start: str, end: str) -> str:
+    pattern = re.compile(
+        rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?",
+        re.S,
+    )
+    return pattern.sub("\n", text)
+
+
+def _routers_assignment_end(text: str) -> int:
+    """Return byte/character offset immediately after the ``routers = [...]`` assignment."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        raise RuntimeError(f"router file is not valid Python before HS patch: {exc}") from exc
+
+    assignment = None
+    for node in tree.body:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(target, ast.Name) and target.id == "routers" for target in targets):
+                assignment = node
+                break
+    if assignment is None or not getattr(assignment, "end_lineno", None):
+        raise RuntimeError("routers assignment not found")
+
+    lines = text.splitlines(keepends=True)
+    return sum(len(line) for line in lines[: assignment.end_lineno])
+
+
 def patch_router(text: str) -> str:
-    start, end = "# hs-plugin-router-start", "# hs-plugin-router-end"
-    if start in text:
-        before, rest = text.split(start, 1)
-        _, after = rest.split(end, 1)
-        text = before.rstrip() + "\n" + after.lstrip("\n")
+    """Register HS router without owning or rewriting PasarGuard's router loop.
+
+    Other extensions (notably Zomorod) may wrap ``for router in routers`` with
+    their own expression. Rewriting that loop makes plugins fight each other.
+    HS therefore only inserts its router into the existing ``routers`` list.
+    """
+    import_start = "# hs-plugin-router-start"
+    import_end = "# hs-plugin-router-end"
+    register_start = "# hs-plugin-router-register-start"
+    register_end = "# hs-plugin-router-register-end"
+
+    # Repair any previous HS integration attempt while leaving foreign plugin
+    # loop wrappers untouched.
+    text = _strip_marked_block(text, import_start, import_end)
+    text = _strip_marked_block(text, register_start, register_end)
     text = text.replace(
         "for router in (([hs_plugin_api.router] if hs_plugin_api else []) + routers):",
         "for router in routers:",
     )
-    block = (
-        "# hs-plugin-router-start\n"
-        "try:\n    from . import hs_plugin_api\n"
-        "except Exception:\n    hs_plugin_api = None\n"
-        "# hs-plugin-router-end\n\n"
+
+    if "api_router = APIRouter()" not in text:
+        raise RuntimeError("router: api_router anchor not found")
+
+    import_block = (
+        f"{import_start}\n"
+        "try:\n"
+        "    from . import hs_plugin_api\n"
+        "except Exception:\n"
+        "    hs_plugin_api = None\n"
+        f"{import_end}\n\n"
     )
-    text = replace_once(text, "api_router = APIRouter()", block + "api_router = APIRouter()", "router")
-    return replace_once(
-        text,
-        "for router in routers:",
-        "for router in (([hs_plugin_api.router] if hs_plugin_api else []) + routers):",
-        "router loop",
+    text = text.replace("api_router = APIRouter()", import_block + "api_router = APIRouter()", 1)
+
+    # Find the routers assignment structurally, so this remains compatible with
+    # upstream formatting changes and with Zomorod's custom router loop.
+    insert_at = _routers_assignment_end(text)
+    register_block = (
+        "\n"
+        f"{register_start}\n"
+        "if hs_plugin_api is not None:\n"
+        "    routers.insert(0, hs_plugin_api.router)\n"
+        f"{register_end}\n"
     )
+    text = text[:insert_at] + register_block + text[insert_at:]
+    return text
 
 
 def patch_user(text: str) -> str:
