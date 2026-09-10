@@ -13,9 +13,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Syntax checks
+      - name: Syntax and behavior checks
         run: |
-          python -m py_compile backend/*.py plugin/patch_pasarguard.py tests/test_runtime.py
+          python -m py_compile backend/*.py plugin/patch_pasarguard.py tests/*.py
           python tests/test_runtime.py
+          python tests/test_patcher.py
           node --check plugin/hs-plugin.js
           bash -n install.sh cli/hs-pg plugin/integrate-dashboard.sh
