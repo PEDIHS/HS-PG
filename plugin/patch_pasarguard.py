@@ -151,8 +151,8 @@ def patch_usage(text: str) -> str:
     """Patch usage accounting so Host Ratio tracks Node Ratio by an offset.
 
     Example: Node 2.0 and Host 2.7 stores +0.7. For traffic observed on that
-    node the effective coefficient is ``2.0 + 0.7 = 2.7``. If Node later moves
-    to 3.0 the Host automatically becomes 3.7.
+    node the effective coefficient is ``2.0 + 0.7 = 2.7``. v1 absolute ratios
+    are still honored until state migration completes.
     """
     text = ensure_import(
         text,
@@ -192,7 +192,7 @@ def patch_usage(text: str) -> str:
         except (ValueError, TypeError):
             invalid_uids.append(uid)
 '''
-    desired = '''    validated_params = []
+    previous_offset = '''    validated_params = []
     invalid_uids = []
     for uid, value in params.items():
         try:
@@ -205,9 +205,26 @@ def patch_usage(text: str) -> str:
         except (ValueError, TypeError):
             invalid_uids.append(uid)
 '''
+    desired = '''    validated_params = []
+    invalid_uids = []
+    for uid, value in params.items():
+        try:
+            # hs-plugin-usage: v2 uses a Node-relative offset; v1 remains safe during migration.
+            native_uid, host_offset, legacy_absolute_ratio = decode_usage_identity(uid)
+            param = {"uid": native_uid, "value": value}
+            if host_offset is not None:
+                param["hs_ratio_offset"] = host_offset
+            if legacy_absolute_ratio is not None:
+                param["hs_absolute_ratio"] = legacy_absolute_ratio
+            validated_params.append(param)
+        except (ValueError, TypeError):
+            invalid_uids.append(uid)
+'''
 
     if desired not in text:
-        if previous_effective in text:
+        if previous_offset in text:
+            text = text.replace(previous_offset, desired, 1)
+        elif previous_effective in text:
             text = text.replace(previous_effective, desired, 1)
         elif legacy_multiply in text:
             text = text.replace(legacy_multiply, desired, 1)
@@ -217,8 +234,9 @@ def patch_usage(text: str) -> str:
     old_expressions = [
         'value = int(param["value"] * coeff)',
         'value = int(param["value"] * param.get("hs_effective_ratio", coeff))',
+        'value = int(param["value"] * max(0.0, coeff + param.get("hs_ratio_offset", 0.0)))',
     ]
-    new_expression = 'value = int(param["value"] * max(0.0, coeff + param.get("hs_ratio_offset", 0.0)))'
+    new_expression = 'value = int(param["value"] * max(0.0, param.get("hs_absolute_ratio", coeff + param.get("hs_ratio_offset", 0.0))))'
     if new_expression not in text:
         replaced = False
         for old in old_expressions:
@@ -231,8 +249,9 @@ def patch_usage(text: str) -> str:
     old_p_expressions = [
         '"value": int(p["value"] * coeff),',
         '"value": int(p["value"] * p.get("hs_effective_ratio", coeff)),',
+        '"value": int(p["value"] * max(0.0, coeff + p.get("hs_ratio_offset", 0.0))),',
     ]
-    new_p_expression = '"value": int(p["value"] * max(0.0, coeff + p.get("hs_ratio_offset", 0.0))),'
+    new_p_expression = '"value": int(p["value"] * max(0.0, p.get("hs_absolute_ratio", coeff + p.get("hs_ratio_offset", 0.0)))),'
     if new_p_expression not in text:
         replaced = False
         for old in old_p_expressions:
