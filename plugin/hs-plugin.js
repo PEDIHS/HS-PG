@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.3';
+  const VERSION = '0.1.4';
   const NAV_ID = 'hs-plugin-nav';
   const ROOT_ID = 'hs-plugin-root';
   const STYLE_ID = 'hs-plugin-style';
@@ -246,7 +246,7 @@
                     ${pluginIcon('hs-nav-icon h-4 w-4')}
                     <span>Host Usage Ratio</span>
                   </div>
-                  <p class="text-muted-foreground text-xs sm:text-sm">Enable Usage Ratio controls inside the Host form.</p>
+                  <p class="text-muted-foreground text-xs sm:text-sm">Enable final effective Usage Ratio controls inside the Host form.</p>
                 </div>
                 ${renderSwitch(enabled)}
               </div>
@@ -312,14 +312,16 @@
     if(!first)return;
 
     const editing=matchEditingHost(dialog);
-    const ratio=Number(editing?.usage_ratio??1);
+    const ratio=Number(editing?.usage_ratio??editing?.node_usage_ratio??1);
+    const nodeRatio=Number(editing?.node_usage_ratio??1);
+    const overridden=!!editing?.is_overridden;
     const wrap=document.createElement('div');
     wrap.id=HOST_FIELD_ID;
     wrap.dataset.hostId=editing?.id||'';
     wrap.innerHTML=`
       <label class="hs-host-label"><span class="hs-gold">Usage Ratio</span><span class="hs-host-badge">HS</span></label>
       <input class="${inputClass}" dir="ltr" type="number" min="0" max="100" step="0.05" value="${ratio}">
-      <div class="hs-host-help">Traffic multiplier for this Host. Final usage = Host Ratio × native Node Ratio.</div>`;
+      <div class="hs-host-help">${overridden?`Final ratio for this Host. Native Node ratio is ${nodeRatio}.`:`Inherited from Node Usage Ratio (${nodeRatio}). Enter another value to set the final ratio.`}</div>`;
     wrap.querySelector('input').addEventListener('input',()=>wrap.dataset.dirty='1');
     first.after(wrap);
   }
