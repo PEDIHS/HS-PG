@@ -31,7 +31,7 @@ def _strip_marked_block(text: str, start: str, end: str) -> str:
 
 
 def _routers_assignment_end(text: str) -> int:
-    """Return byte/character offset immediately after the ``routers = [...]`` assignment."""
+    """Return character offset immediately after the ``routers = [...]`` assignment."""
     try:
         tree = ast.parse(text)
     except SyntaxError as exc:
@@ -62,6 +62,16 @@ def patch_router(text: str) -> str:
     import_end = "# hs-plugin-router-end"
     register_start = "# hs-plugin-router-register-start"
     register_end = "# hs-plugin-router-register-end"
+
+    # Already healthy: do not rewrite whitespace on every integrator run.
+    if (
+        import_start in text
+        and import_end in text
+        and register_start in text
+        and register_end in text
+        and "routers.insert(0, hs_plugin_api.router)" in text
+    ):
+        return text
 
     # Repair any previous HS integration attempt while leaving foreign plugin
     # loop wrappers untouched.
