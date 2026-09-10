@@ -6,35 +6,47 @@
 
 ## قابلیت اول: Host Usage Ratio
 
-PasarGuard به‌صورت native برای Node گزینه‌ی `Usage Ratio` دارد. HS Plugin همین مفهوم را برای Host اضافه می‌کند:
+PasarGuard به‌صورت native برای Node گزینه‌ی `Usage Ratio` دارد. HS Plugin همین مفهوم را برای Host به‌صورت **هماهنگ با Node** اضافه می‌کند:
 
 - در modal ساخت/ویرایش Host، فیلد `Usage Ratio` با ظاهر خود PasarGuard اضافه می‌شود.
-- مقدار Host در حالت عادی از `Usage Ratio` نود ارث می‌برد؛ اگر Node روی `2` باشد Host نیز `2` نشان می‌دهد.
-- اگر Host را مثلاً روی `2.7` بگذارید، **ضریب نهایی همان Host برابر 2.7 است**؛ Node و Host در هم ضرب نمی‌شوند.
-- بنابراین Node `2` + Host override `2.7` هرگز `5.4` نمی‌شود؛ ترافیک همان Host با ضریب نهایی `2.7` محاسبه می‌شود.
-- اگر مقدار Host با مقدار ارث‌برده‌شده‌ی Node برابر باشد، override حذف می‌شود تا Host دوباره همراه تغییرات Node حرکت کند.
+- مقدار Host در حالت عادی از `Usage Ratio` نودی که Core آن شامل Inbound همان Host است ارث می‌برد؛ اگر Node روی `2` باشد Host نیز `2` نشان می‌دهد.
+- اگر Host را از `2` به `2.7` تغییر دهید، افزونه اختلاف `+0.7` را نگه می‌دارد؛ مصرف آن Host در همان Node با ضریب نهایی `2.7` حساب می‌شود.
+- Node و Host هرگز در هم ضرب نمی‌شوند؛ Node `2` و Host `2.7` به `5.4` تبدیل نمی‌شود.
+- چون اختلاف نگه‌داری می‌شود، اگر بعداً Node از `2` به `3` تغییر کند، همان Host از `2.7` به `3.7` می‌رود. یعنی Host دائماً با baseline نود sync می‌ماند.
+- اگر Host را دوباره دقیقاً برابر Ratio نود کنید، اختلاف حذف می‌شود و Host کاملاً از Node پیروی می‌کند.
 - قابلیت را می‌توان از تب HS Plugin روشن/خاموش کرد.
-- عنوان `HS Plugin`، آیکن افزونه و برچسب `Usage Ratio` افکت طلایی ملایم دارند، اما layout و shell اصلی PasarGuard حفظ می‌شود.
+- عنوان `HS Plugin`، آیکن افزونه و برچسب `Usage Ratio` افکت طلایی ملایم دارند، اما sidebar، topbar، footer و shell اصلی PasarGuard دست‌نخورده می‌مانند.
 
 فرمول حسابداری:
 
 ```text
-بدون Host override:
-charged usage = raw usage × actual Node Usage Ratio
-
-با Host override:
-charged usage = raw usage × Host Usage Ratio
+host_offset = Host Usage Ratio - Node Usage Ratio
+charged usage = raw usage × max(0, actual Node Usage Ratio + host_offset)
 ```
 
-یعنی `Host Usage Ratio` یک **Final Effective Ratio** است، نه یک multiplier دوم روی Node.
+مثال:
 
-### هماهنگی با Node
+```text
+Node Ratio = 2.0
+Host Ratio = 2.7
+Stored HS offset = +0.7
+Final charged ratio = 2.0 + 0.7 = 2.7
 
-PasarGuard برای Host یک foreign key مستقیم به Node نگه نمی‌دارد. HS Plugin برای مقدار نمایشی، در صورت امکان Node را از آدرس Host تشخیص می‌دهد؛ در نصب تک‌نودی یا زمانی که همه Nodeها یک ضریب دارند، مقدار ارثی نیز بدون ابهام مشخص است. خود accounting به این تشخیص نمایشی وابسته نیست: ترافیک عادی همیشه coefficient همان Node واقعی را می‌گیرد و فقط ترافیک Hostی که override دارد، coefficient نهایی Host را جایگزین می‌کند.
+اگر بعداً Node Ratio = 3.0 شود:
+Final charged ratio = 3.0 + 0.7 = 3.7
+```
+
+### تشخیص Node مربوط به Host
+
+PasarGuard روی Node یک `core_config_id` دارد. HS Plugin ابتدا CoreConfig هر Node را بررسی می‌کند و نودی را پیدا می‌کند که Inbound انتخاب‌شده‌ی Host داخل Core آن وجود دارد. اگر یک Node مشخص شود، همان `Usage Ratio` به‌عنوان baseline Host استفاده می‌شود. در حالت‌های قدیمی یا خاص، تشخیص از طریق address، تک‌نودی بودن یا Ratio مشترک Nodeها انجام می‌شود.
+
+اگر یک Inbound واقعاً روی چند Node با Ratioهای متفاوت فعال باشد و baseline یکتا قابل تشخیص نباشد، افزونه به‌جای حدس زدن و خراب‌کردن حسابداری، ذخیره‌ی Ratio جدید را با خطای واضح متوقف می‌کند.
+
+خود accounting همیشه coefficient همان Node واقعی‌ای را که usage از آن دریافت شده استفاده می‌کند و فقط offset مربوط به Host را روی آن اضافه می‌کند.
 
 ### نکته مهم درباره Hostهای دارای Inbound مشترک
 
-Xray/PasarGuard در آمار فعلی، traffic کاربر را به شکل `user` ثبت می‌کند و Host address/SNI را در آمار user نگه نمی‌دارد. بنابراین دو Host که دقیقاً یک `inbound_tag` دارند از نظر accounting قابل تفکیک قطعی نیستند. HS Plugin برای جلوگیری از حساب اشتباه، **همه Hostهای دارای یک inbound مشترک را با یک Ratio مشترک** مدیریت می‌کند.
+Xray/PasarGuard در آمار فعلی، traffic کاربر را به شکل `user` ثبت می‌کند و Host address/SNI را در آمار user نگه نمی‌دارد. بنابراین دو Host که دقیقاً یک `inbound_tag` دارند از نظر accounting قابل تفکیک قطعی نیستند. HS Plugin برای جلوگیری از حساب اشتباه، **همه Hostهای دارای یک inbound مشترک را با یک Ratio/offset مشترک** مدیریت می‌کند.
 
 برای Hostهایی که inbound مستقل دارند، attribution مستقل است. افزونه برای این کار شناسه‌های آماری داخلی per-inbound می‌سازد، در زمان ثبت usage آن‌ها را دوباره به User ID اصلی برمی‌گرداند و Online/IP stats را نیز روی شناسه اصلی + aliasهای داخلی تجمیع می‌کند.
 
@@ -101,9 +113,11 @@ cli/hs-pg                         management CLI
 
 HS Plugin عمداً جدول یا column جدیدی به دیتابیس PasarGuard اضافه نمی‌کند. state افزونه فایل مستقل با write اتمیک و lock است. Native Host save در صورت خطای follow-up افزونه fail نمی‌شود. patcher نیز تنها روی anchorهای نسخه‌ای که می‌شناسد عمل می‌کند.
 
+State قدیمی نسخه 1 که Ratioهای مطلق را نگه می‌داشت، در اولین فراخوانی API به مدل offset نسخه 2 مهاجرت می‌کند. Runtime تا قبل از تکمیل این مهاجرت، فرمت قدیمی را نیز می‌فهمد تا در زمان بروزرسانی rolling، accounting اشتباه نشود.
+
 ## English
 
-HS Plugin is an update-resistant extension layer for PasarGuard. v0.1.4 adds a Node-synced **per-Host/inbound Usage Ratio** whose value is the final effective accounting coefficient. Native Host traffic inherits the actual Node coefficient; an explicit Host override replaces that coefficient rather than multiplying it. The plugin keeps its state outside the core database and re-applies integration after upstream updates. Hosts sharing the same inbound necessarily share one effective ratio because upstream user traffic stats do not retain the originating Host/SNI.
+HS Plugin is an update-resistant extension layer for PasarGuard. Host Usage Ratio is synchronized to the native Node Usage Ratio by storing only the Host delta. Example: Node 2.0 and Host 2.7 stores +0.7; traffic is charged at 2.7, not 5.4. If the Node later changes to 3.0, the Host becomes 3.7. The plugin resolves the Host baseline from the Node CoreConfig that owns the selected inbound, keeps state outside the core database, preserves legacy state during migration, and re-applies integration after upstream updates.
 
 ## License
 
