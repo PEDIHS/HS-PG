@@ -26,14 +26,16 @@ Xray/PasarGuard در آمار فعلی، traffic کاربر را به شکل `us
 
 ## نصب
 
+دستور پیشنهادی (بدون وابستگی به `/dev/fd` یا process substitution):
+
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/PEDIHS/HS-PG/main/install.sh) --restart
+curl -fsSL https://raw.githubusercontent.com/PEDIHS/HS-PG/main/install.sh | sudo bash -s -- --restart
 ```
 
 `--restart` فقط در نصب اول برای load شدن hookهای Python لازم است و PasarGuard را یک بار restart می‌کند. اگر نمی‌خواهید installer هیچ سرویسی را restart کند:
 
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/PEDIHS/HS-PG/main/install.sh)
+curl -fsSL https://raw.githubusercontent.com/PEDIHS/HS-PG/main/install.sh | sudo bash
 ```
 
 سپس در زمان مناسب:
