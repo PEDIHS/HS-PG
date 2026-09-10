@@ -66,8 +66,11 @@ fi
 if command -v systemctl >/dev/null 2>&1; then
   for unit in hs-pg-integrator.service hs-pg-integrator.timer hs-pg-integrator.path; do install -m 0644 "$TMP/systemd/$unit" "/etc/systemd/system/$unit"; done
   systemctl daemon-reload
-  systemctl enable --now hs-pg-integrator.timer >/dev/null 2>&1 || true
+  systemctl enable hs-pg-integrator.timer >/dev/null 2>&1 || true
+  systemctl restart hs-pg-integrator.timer >/dev/null 2>&1 || true
   [[ -f /opt/pasarguard/docker-compose.yml ]] && systemctl enable --now hs-pg-integrator.path >/dev/null 2>&1 || true
+  systemctl enable hs-pg-integrator.service >/dev/null 2>&1 || true
+  systemctl restart hs-pg-integrator.service >/dev/null 2>&1 || true
 fi
 
 log "$MODE files installed in $ROOT"
@@ -76,7 +79,8 @@ if [[ $RESTART -eq 1 ]]; then
   log "restarting PasarGuard as explicitly requested"
   /usr/local/bin/hs-pg restart
 else
-  log "no service restart performed"
-  log "run 'sudo hs-pg restart' once to activate backend hooks; dashboard files are already guarded by the integrator"
+  log "no PasarGuard service restart performed"
+  log "host persistence guard is active and will re-apply HS Plugin after PasarGuard update/restart/recreate"
+  log "run 'sudo hs-pg restart' only when backend hooks need activation"
 fi
 log "future updates: sudo hs-pg update"
