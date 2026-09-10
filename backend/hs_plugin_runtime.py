@@ -64,6 +64,13 @@ def inbound_key(tag: str) -> str:
 
 
 def tracked_inbounds(state: dict | None = None) -> dict[str, float]:
+    """Return inbound -> final effective usage ratio overrides.
+
+    Values here are *not* secondary multipliers. A value of 2.7 means traffic
+    attributed to that Host/Inbound must finally count as x2.7, regardless of
+    the native node coefficient. The PasarGuard usage patch applies this value
+    instead of the node coefficient for HS aliases.
+    """
     state = state or load_state()
     result: dict[str, float] = {}
     for tag, value in state.get("inbound_ratios", {}).items():
@@ -126,10 +133,15 @@ def expand_proto_users(proto_users: Iterable) -> list:
     return output
 
 
-def decode_usage_identity(name: str) -> tuple[int, float]:
-    """Return PasarGuard user id and HS multiplier for an Xray stat identity."""
+def decode_usage_identity(name: str) -> tuple[int, float | None]:
+    """Return ``(user_id, effective_ratio_override)`` for a stat identity.
+
+    Native PasarGuard identities return ``None`` so PasarGuard keeps applying
+    that node's own ``usage_coefficient``. HS aliases return the Host's final
+    effective ratio, which replaces (rather than multiplies) the node ratio.
+    """
     try:
-        return int(name), 1.0
+        return int(name), None
     except (TypeError, ValueError):
         pass
 
@@ -148,8 +160,8 @@ def decode_usage_identity(name: str) -> tuple[int, float]:
     if matched_ratio is None:
         raise ValueError(f"stale HS usage identity: {name}")
 
-    multiplier = matched_ratio if host_ratio_enabled(state) else 1.0
-    return int(match.group("uid")), multiplier
+    effective_ratio = matched_ratio if host_ratio_enabled(state) else None
+    return int(match.group("uid")), effective_ratio
 
 
 def usage_emails_for_user(uid: int | str) -> list[str]:
