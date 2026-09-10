@@ -39,9 +39,16 @@ class RuntimeTests(unittest.TestCase):
             'inbound_offsets': offsets or {},
         }), encoding='utf-8')
 
+    def write_legacy_state(self, enabled=True, ratios=None):
+        Path(self.tmp.name, 'state.json').write_text(json.dumps({
+            'version': 1,
+            'features': {'host_usage_ratio': {'enabled': enabled}},
+            'inbound_ratios': ratios or {},
+        }), encoding='utf-8')
+
     def test_native_identity_keeps_node_ratio(self):
         self.write_state(True, {'vless-main': 0.7})
-        self.assertEqual(self.mod.decode_usage_identity('42'), (42, None))
+        self.assertEqual(self.mod.decode_usage_identity('42'), (42, None, None))
 
     def test_tracked_inbound_is_split_and_carries_offset(self):
         self.write_state(True, {'vless-main': 0.7})
@@ -50,9 +57,19 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(users[0].email, '42')
         self.assertEqual(users[0].inbounds, ['other'])
         self.assertEqual(users[1].inbounds, ['vless-main'])
-        uid, offset = self.mod.decode_usage_identity(users[1].email)
+        uid, offset, absolute = self.mod.decode_usage_identity(users[1].email)
         self.assertEqual(uid, 42)
         self.assertAlmostEqual(offset, 0.7)
+        self.assertIsNone(absolute)
+
+    def test_legacy_absolute_ratio_remains_safe_until_migration(self):
+        self.write_legacy_state(True, {'vless-main': 2.7})
+        users = self.mod.expand_proto_users([FakeUser(inbounds=['vless-main', 'other'])])
+        self.assertEqual(len(users), 2)
+        uid, offset, absolute = self.mod.decode_usage_identity(users[1].email)
+        self.assertEqual(uid, 42)
+        self.assertIsNone(offset)
+        self.assertAlmostEqual(absolute, 2.7)
 
     def test_zero_offset_needs_no_alias(self):
         self.write_state(True, {'vless-main': 0.0})
@@ -66,7 +83,7 @@ class RuntimeTests(unittest.TestCase):
         users = self.mod.expand_proto_users([FakeUser(inbounds=['vless-main', 'other'])])
         self.assertEqual(users[0].inbounds, ['vless-main', 'other'])
         self.assertEqual(users[1].inbounds, [])
-        self.assertEqual(self.mod.decode_usage_identity(users[1].email), (42, None))
+        self.assertEqual(self.mod.decode_usage_identity(users[1].email), (42, None, None))
 
     def test_alias_preserves_credentials(self):
         self.write_state(True, {'vless-main': 0.7})
