@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.2';
+  const VERSION = '0.1.3';
   const NAV_ID = 'hs-plugin-nav';
   const ROOT_ID = 'hs-plugin-root';
   const STYLE_ID = 'hs-plugin-style';
@@ -54,7 +54,7 @@
     return headers;
   }
 
-  async function api(path, options={}){
+  async function api(path,options={}){
     const {headers,...rest}=options;
     const response=await rawFetch(`/api/hs-plugin${path}`,{credentials:'same-origin',...rest,headers:authHeaders(headers)});
     const data=await response.json().catch(()=>({}));
@@ -101,9 +101,25 @@
     return li;
   }
 
+  function suppressNativeActive(){
+    document.querySelectorAll('[data-sidebar="menu-button"][data-active="true"]').forEach(button=>{
+      if(button.closest(`#${NAV_ID}`))return;
+      if(!button.hasAttribute('data-hs-prev-active'))button.setAttribute('data-hs-prev-active',button.dataset.active||'false');
+      button.dataset.active='false';
+    });
+  }
+
+  function restoreNativeActive(){
+    document.querySelectorAll('[data-sidebar="menu-button"][data-hs-prev-active]').forEach(button=>{
+      button.dataset.active=button.getAttribute('data-hs-prev-active')||'false';
+      button.removeAttribute('data-hs-prev-active');
+    });
+  }
+
   function updateNavActive(){
     const button=document.querySelector(`#${NAV_ID} [data-sidebar="menu-button"]`);
     if(button)button.dataset.active=active?'true':'false';
+    if(active)suppressNativeActive();
   }
 
   function ensureNav(){
@@ -119,6 +135,7 @@
 
     const button=document.createElement('button');
     button.type='button';
+    button.title='HS Plugin';
     button.setAttribute('data-sidebar','menu-button');
     button.setAttribute('data-size','default');
     button.dataset.active=active?'true':'false';
@@ -128,31 +145,59 @@
 
     li.appendChild(button);
     nodeItem.after(li);
+    updateNavActive();
   }
 
-  function getMain(){return document.querySelector('main')||document.querySelector('[role="main"]')}
+  function getOutletHost(){
+    const inset=document.querySelector('main.dashboard-scroll')||document.querySelector('main');
+    if(!inset)return null;
 
-  function hideMain(main){
-    [...main.children].forEach(el=>{
+    const shell=[...inset.children].find(el=>
+      el.tagName==='DIV'&&
+      el.classList.contains('flex')&&
+      el.classList.contains('min-h-0')&&
+      el.classList.contains('w-full')&&
+      el.classList.contains('flex-1')&&
+      el.classList.contains('flex-col')&&
+      el.classList.contains('justify-between')
+    );
+    if(!shell)return null;
+
+    return [...shell.children].find(el=>
+      el.tagName==='DIV'&&
+      el.classList.contains('w-full')&&
+      el.classList.contains('flex')&&
+      el.classList.contains('min-h-0')&&
+      el.classList.contains('flex-1')&&
+      el.classList.contains('flex-col')&&
+      !el.classList.contains('justify-between')
+    )||null;
+  }
+
+  function hideOutletContent(outlet){
+    [...outlet.children].forEach(el=>{
       if(el.id===ROOT_ID)return;
-      if(!el.hasAttribute('data-hs-prev-display'))el.setAttribute('data-hs-prev-display',el.style.display||'');
+      if(!el.hasAttribute('data-hs-outlet-display'))el.setAttribute('data-hs-outlet-display',el.style.display||'');
       el.style.display='none';
     });
   }
 
-  function restoreMain(main){
-    [...main.querySelectorAll(':scope > [data-hs-prev-display]')].forEach(el=>{
-      el.style.display=el.getAttribute('data-hs-prev-display')||'';
-      el.removeAttribute('data-hs-prev-display');
+  function restoreOutletContent(outlet){
+    [...outlet.children].forEach(el=>{
+      if(!el.hasAttribute('data-hs-outlet-display'))return;
+      el.style.display=el.getAttribute('data-hs-outlet-display')||'';
+      el.removeAttribute('data-hs-outlet-display');
     });
   }
 
   function deactivate(){
     active=false;
-    const main=getMain();
-    if(main)restoreMain(main);
+    const outlet=getOutletHost();
+    if(outlet)restoreOutletContent(outlet);
     document.getElementById(ROOT_ID)?.remove();
-    updateNavActive();
+    restoreNativeActive();
+    const button=document.querySelector(`#${NAV_ID} [data-sidebar="menu-button"]`);
+    if(button)button.dataset.active='false';
   }
 
   function renderSwitch(enabled){
@@ -169,15 +214,19 @@
   }
 
   function render(){
-    const main=getMain();
-    if(!main)return;
-    hideMain(main);
+    const outlet=getOutletHost();
+    if(!outlet){
+      console.warn('[HS Plugin] PasarGuard Outlet host was not found; dashboard shell was left untouched.');
+      return;
+    }
 
+    hideOutletContent(outlet);
     let root=document.getElementById(ROOT_ID);
     if(!root){
       root=document.createElement('section');
       root.id=ROOT_ID;
-      main.appendChild(root);
+      root.className='flex min-h-0 w-full flex-1 flex-col';
+      outlet.appendChild(root);
     }
 
     const enabled=!!state?.features?.host_usage_ratio?.enabled;
@@ -188,7 +237,7 @@
             <div class="space-y-3">
               <div class="space-y-2">
                 <h3 class="text-base font-semibold sm:text-lg">HS Plugin</h3>
-                <p class="text-muted-foreground text-xs sm:text-sm">Extensions for PasarGuard. Enable or disable each HS feature from here.</p>
+                <p class="text-muted-foreground text-xs sm:text-sm">Manage HS extensions for PasarGuard.</p>
               </div>
 
               <div class="bg-card hover:bg-accent/50 flex flex-row items-center justify-between space-y-0 gap-x-3 rounded-lg border p-3 transition-colors sm:p-4">
@@ -197,7 +246,7 @@
                     ${pluginIcon('hs-nav-icon h-4 w-4')}
                     <span>Host Usage Ratio</span>
                   </div>
-                  <p class="text-muted-foreground text-xs sm:text-sm">Adds the Usage Ratio field to Hosts and applies it to traffic accounting.</p>
+                  <p class="text-muted-foreground text-xs sm:text-sm">Enable Usage Ratio controls inside the Host form.</p>
                 </div>
                 ${renderSwitch(enabled)}
               </div>
@@ -234,15 +283,13 @@
   }
 
   async function activate(){
-    active=true;
-    updateNavActive();
     if(!state)await refreshState();
     if(!ownerAllowed){
       console.warn('[HS Plugin] unavailable',lastError);
-      active=false;
-      updateNavActive();
       return;
     }
+    active=true;
+    updateNavActive();
     render();
   }
 
@@ -319,7 +366,15 @@
     injectStyle();
     ensureNav();
     scanHostDialogs();
-    if(active&&!document.getElementById(ROOT_ID))render();
+
+    if(active){
+      updateNavActive();
+      const outlet=getOutletHost();
+      if(outlet){
+        hideOutletContent(outlet);
+        if(!document.getElementById(ROOT_ID))render();
+      }
+    }
   }
 
   function queueMaintain(){
@@ -333,6 +388,7 @@
     installHostSaveBridge();
     await refreshState();
     maintain();
+
     new MutationObserver(queueMaintain).observe(document.documentElement,{childList:true,subtree:true});
     document.addEventListener('click',event=>{
       if(active&&!event.target.closest(`#${NAV_ID}`)&&event.target.closest('a'))deactivate();
@@ -340,6 +396,6 @@
     setInterval(()=>refreshState().then(queueMaintain),60000);
   }
 
-  window.HSPluginDebug={version:VERSION,refresh:refreshState,getState:()=>state,getError:()=>lastError};
+  window.HSPluginDebug={version:VERSION,refresh:refreshState,getState:()=>state,getError:()=>lastError,getOutletHost};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
