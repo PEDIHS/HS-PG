@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+REPO="PEDIHS/HS-PG"
+REF="main"
+ROOT="/opt/hs-pg"
+DATA="/var/lib/pasarguard/hs-plugin"
+TMP=""
+MODE="install"
+RESTART=0
+
+log(){ printf '\033[1;33m[HS Plugin]\033[0m %s\n' "$*"; }
+fail(){ printf '\033[1;31m[HS Plugin]\033[0m %s\n' "$*" >&2; exit 1; }
+cleanup(){ [[ -n "$TMP" && -d "$TMP" ]] && rm -rf "$TMP" || true; }
+trap cleanup EXIT
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --update|update) MODE="update"; shift ;;
+    --restart) RESTART=1; shift ;;
+    --ref) [[ $# -ge 2 ]] || fail "--ref requires a value"; REF="$2"; shift 2 ;;
+    -h|--help) echo "Usage: install.sh [--update] [--restart] [--ref <tag|branch>]"; exit 0 ;;
+    *) fail "unknown option: $1" ;;
+  esac
+done
+
+[[ ${EUID} -eq 0 ]] || fail "run as root/sudo"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+if command -v curl >/dev/null 2>&1; then
+  dl(){ curl -fL --retry 3 --connect-timeout 15 --max-time 120 -H 'Cache-Control: no-cache' "$1" -o "$2"; }
+elif command -v wget >/dev/null 2>&1; then
+  dl(){ wget -q --tries=3 --timeout=20 "$1" -O "$2"; }
+else fail "curl or wget is required"; fi
+
+TMP="$(mktemp -d)"
+raw(){ printf 'https://raw.githubusercontent.com/%s/%s/%s?hs=%s' "$REPO" "$REF" "$1" "$(date +%s)"; }
+files=(backend/hs_plugin_runtime.py backend/hs_plugin_api.py plugin/patch_pasarguard.py plugin/integrate-dashboard.sh plugin/hs-plugin.js cli/hs-pg systemd/hs-pg-integrator.service systemd/hs-pg-integrator.timer systemd/hs-pg-integrator.path)
+for file in "${files[@]}"; do mkdir -p "$TMP/$(dirname "$file")"; dl "$(raw "$file")" "$TMP/$file" || fail "failed to download $file"; done
+
+python3 -m py_compile "$TMP/backend/hs_plugin_runtime.py" "$TMP/backend/hs_plugin_api.py" "$TMP/plugin/patch_pasarguard.py" || fail "Python validation failed"
+bash -n "$TMP/plugin/integrate-dashboard.sh" "$TMP/cli/hs-pg" || fail "Shell validation failed"
+
+backup="$ROOT/backups/$(date +%Y%m%d-%H%M%S)"
+[[ -d "$ROOT" ]] && { mkdir -p "$backup"; cp -a "$ROOT/backend" "$ROOT/plugin" "$ROOT/cli" "$backup/" 2>/dev/null || true; }
+mkdir -p "$ROOT/backend" "$ROOT/plugin" "$ROOT/cli" "$ROOT/systemd" "$DATA"
+install -m 0644 "$TMP/backend/hs_plugin_runtime.py" "$ROOT/backend/hs_plugin_runtime.py"
+install -m 0644 "$TMP/backend/hs_plugin_api.py" "$ROOT/backend/hs_plugin_api.py"
+install -m 0755 "$TMP/plugin/patch_pasarguard.py" "$ROOT/plugin/patch_pasarguard.py"
+install -m 0755 "$TMP/plugin/integrate-dashboard.sh" "$ROOT/plugin/integrate-dashboard.sh"
+install -m 0644 "$TMP/plugin/hs-plugin.js" "$ROOT/plugin/hs-plugin.js"
+install -m 0755 "$TMP/cli/hs-pg" "$ROOT/cli/hs-pg"
+install -m 0755 "$TMP/cli/hs-pg" /usr/local/bin/hs-pg
+
+if [[ ! -f "$DATA/state.json" ]]; then
+  cat > "$DATA/state.json" <<'JSON'
+{
+  "version": 1,
+  "features": {"host_usage_ratio": {"enabled": true}},
+  "inbound_ratios": {},
+  "updated_at": null
+}
+JSON
+  chmod 600 "$DATA/state.json"
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  for unit in hs-pg-integrator.service hs-pg-integrator.timer hs-pg-integrator.path; do install -m 0644 "$TMP/systemd/$unit" "/etc/systemd/system/$unit"; done
+  systemctl daemon-reload
+  systemctl enable --now hs-pg-integrator.timer >/dev/null 2>&1 || true
+  [[ -f /opt/pasarguard/docker-compose.yml ]] && systemctl enable --now hs-pg-integrator.path >/dev/null 2>&1 || true
+fi
+
+log "$MODE files installed in $ROOT"
+"$ROOT/plugin/integrate-dashboard.sh" || fail "PasarGuard integration failed safely; no service was restarted"
+if [[ $RESTART -eq 1 ]]; then
+  log "restarting PasarGuard as explicitly requested"
+  /usr/local/bin/hs-pg restart
+else
+  log "no service restart performed"
+  log "run 'sudo hs-pg restart' once to activate backend hooks; dashboard files are already guarded by the integrator"
+fi
+log "future updates: sudo hs-pg update"
