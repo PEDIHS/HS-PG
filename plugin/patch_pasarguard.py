@@ -202,27 +202,19 @@ def patch_usage(text: str) -> str:
         else:
             text = replace_once(text, original, desired, "record usage identity")
 
-    coefficient_replacements = [
-        (
-            '        value = int(param["value"] * coeff)\n',
-            '        value = int(param["value"] * param.get("hs_effective_ratio", coeff))\n',
-            "threaded usage coefficient",
-        ),
-        (
-            '                    "value": int(p["value"] * coeff),\n',
-            '                    "value": int(p["value"] * p.get("hs_effective_ratio", coeff)),\n',
-            "node usage log coefficient",
-        ),
-        (
-            '                value = int(param["value"] * coeff)\n',
-            '                value = int(param["value"] * param.get("hs_effective_ratio", coeff))\n',
-            "sync usage coefficient",
-        ),
-    ]
-    for old, new, label in coefficient_replacements:
-        if new in text:
-            continue
-        text = replace_once(text, old, new, label)
+    old_param = 'value = int(param["value"] * coeff)'
+    new_param = 'value = int(param["value"] * param.get("hs_effective_ratio", coeff))'
+    if old_param in text:
+        text = text.replace(old_param, new_param)
+    elif new_param not in text:
+        raise RuntimeError("usage coefficient anchors not found")
+
+    old_p = '"value": int(p["value"] * coeff),'
+    new_p = '"value": int(p["value"] * p.get("hs_effective_ratio", coeff)),'
+    if old_p in text:
+        text = text.replace(old_p, new_p)
+    elif new_p not in text:
+        raise RuntimeError("node usage log coefficient anchor not found")
 
     return text
 
