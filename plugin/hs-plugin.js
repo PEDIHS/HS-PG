@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.1';
+  const VERSION = '0.1.2';
   const NAV_ID = 'hs-plugin-nav';
   const ROOT_ID = 'hs-plugin-root';
   const STYLE_ID = 'hs-plugin-style';
@@ -15,31 +15,36 @@
   let queued = false;
   let lastError = null;
 
+  const menuButtonClass = 'peer/menu-button relative flex h-8 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none ring-sidebar-ring transition-[width,height,padding,background-color] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-[[data-sidebar=menu-action]]/menu-item:ltr:pr-8 group-has-[[data-sidebar=menu-action]]/menu-item:rtl:pl-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent/70 data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:before:bg-primary data-[active=true]:before:absolute data-[active=true]:before:inset-y-1.5 data-[active=true]:before:start-0 data-[active=true]:before:w-0.5 data-[active=true]:before:rounded-full group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0';
+  const inputClass = 'border-border bg-input file:text-foreground placeholder:text-input-placeholder focus-visible:ring-ring flex h-9 w-full rounded-lg border px-3 py-2 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
+  const switchClass = 'peer focus-visible:ring-ring focus-visible:ring-offset-background data-[state=checked]:bg-primary data-[state=unchecked]:bg-input inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-sm transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
+  const switchThumbClass = 'bg-background pointer-events-none block h-4 w-4 rounded-full shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0';
+
+  const pluginIcon = (className = '') => `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a6 6 0 0 1-12 0V8Z"/></svg>`;
+
   const css = `
     @keyframes hsGoldSweep{0%{background-position:180% 50%}100%{background-position:-80% 50%}}
-    .hs-gold{background:linear-gradient(105deg,#8f650f 0%,#d4a72c 30%,#fff0a8 46%,#d4a72c 62%,#8f650f 100%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent!important;animation:hsGoldSweep 3.8s linear infinite;filter:drop-shadow(0 0 4px rgba(212,167,44,.16))}
+    .hs-gold{background:linear-gradient(105deg,#8f650f 0%,#d4a72c 30%,#fff0a8 46%,#d4a72c 62%,#8f650f 100%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent!important;animation:hsGoldSweep 4.2s linear infinite;filter:drop-shadow(0 0 3px rgba(212,167,44,.12))}
+    .hs-nav-icon{color:#d4a72c;filter:drop-shadow(0 0 3px rgba(212,167,44,.28))}
     @media(prefers-reduced-motion:reduce){.hs-gold{animation:none;background-position:50% 50%}}
-    #${NAV_ID}{position:relative}
-    #${NAV_ID} .hs-spark{width:.42rem;height:.42rem;border-radius:999px;background:#d4a72c;box-shadow:0 0 7px rgba(212,167,44,.55);flex:0 0 auto}
-    #${ROOT_ID}{width:100%;padding:1rem 1rem 2rem;color:hsl(var(--foreground));font-family:inherit}
+    #${ROOT_ID}{width:100%;color:hsl(var(--foreground));font-family:inherit}
     #${ROOT_ID} *{box-sizing:border-box}
-    #${ROOT_ID} .hs-hero{border:1px solid rgba(212,167,44,.23);border-radius:calc(var(--radius,.5rem) + .45rem);padding:1.05rem;background:linear-gradient(135deg,rgba(212,167,44,.08),hsl(var(--card)) 55%,rgba(212,167,44,.035));display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
-    #${ROOT_ID} .hs-title{font-size:1.1rem;font-weight:850;margin:0}.hs-sub{font-size:.72rem;color:hsl(var(--muted-foreground));margin-top:.2rem;line-height:1.65}
-    #${ROOT_ID} .hs-version{font-size:.66rem;padding:.28rem .48rem;border:1px solid hsl(var(--border));border-radius:.45rem;color:hsl(var(--muted-foreground));background:hsl(var(--background)/.65)}
-    #${ROOT_ID} .hs-card{margin-top:1rem;border:1px solid hsl(var(--border));border-radius:calc(var(--radius,.5rem) + .25rem);background:hsl(var(--card));padding:1rem}
-    #${ROOT_ID} .hs-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap}.hs-card-title{font-size:.92rem;font-weight:800}.hs-note{font-size:.68rem;color:hsl(var(--muted-foreground));line-height:1.7;margin-top:.2rem}
-    #${ROOT_ID} .hs-toggle{appearance:none;width:38px;height:21px;border-radius:999px;background:hsl(var(--input));border:1px solid hsl(var(--border));position:relative;cursor:pointer;transition:.18s;flex:0 0 auto}.hs-toggle:after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:999px;background:hsl(var(--foreground)/.65);transition:.18s}.hs-toggle:checked{background:#b8860b;border-color:#b8860b}.hs-toggle:checked:after{left:19px;background:white}
-    #${ROOT_ID} .hs-hosts{display:grid;gap:.55rem;margin-top:.9rem}.hs-host{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 110px auto;gap:.65rem;align-items:center;border:1px solid hsl(var(--border));border-radius:.7rem;padding:.7rem;background:hsl(var(--background)/.35)}
-    #${ROOT_ID} .hs-host-name{font-size:.77rem;font-weight:750;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hs-inbound{font-size:.66rem;color:hsl(var(--muted-foreground));font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr;text-align:left}
-    #${ROOT_ID} input[type=number],#${HOST_FIELD_ID} input{width:100%;height:36px;border:1px solid hsl(var(--border));background:hsl(var(--background));color:hsl(var(--foreground));border-radius:var(--radius,.5rem);padding:0 .65rem;font:inherit;font-size:.78rem;outline:none}#${ROOT_ID} input[type=number]:focus,#${HOST_FIELD_ID} input:focus{border-color:rgba(184,134,11,.7);box-shadow:0 0 0 3px rgba(212,167,44,.09)}
-    #${ROOT_ID} button.hs-btn{height:36px;border:1px solid rgba(184,134,11,.35);border-radius:var(--radius,.5rem);padding:0 .72rem;font:inherit;font-size:.72rem;font-weight:750;cursor:pointer;color:hsl(var(--foreground));background:linear-gradient(135deg,rgba(212,167,44,.13),rgba(184,134,11,.06))}.hs-btn:disabled{opacity:.5;cursor:wait}
-    #${ROOT_ID} .hs-shared{display:inline-flex;margin-top:.2rem;font-size:.58rem;padding:.15rem .35rem;border-radius:999px;border:1px solid rgba(212,167,44,.25);color:#a8750a;background:rgba(212,167,44,.07)}
-    #${ROOT_ID} .hs-status{margin-top:.75rem;font-size:.69rem;color:hsl(var(--muted-foreground));min-height:1.2em}.hs-status.ok{color:#16a34a}.hs-status.err{color:#dc2626}
-    #${HOST_FIELD_ID}{margin-top:1rem}.hs-host-label{display:flex;align-items:center;gap:.45rem;margin-bottom:.45rem;font-size:.875rem;font-weight:500}.hs-host-badge{font-size:.55rem;line-height:1;padding:.18rem .34rem;border:1px solid rgba(212,167,44,.28);border-radius:999px;color:#a8750a;background:rgba(212,167,44,.07)}.hs-host-help{font-size:.66rem;line-height:1.55;color:hsl(var(--muted-foreground));margin-top:.35rem}
-    @media(max-width:800px){#${ROOT_ID}{padding:.8rem .7rem 1.5rem}#${ROOT_ID} .hs-host{grid-template-columns:1fr 95px auto}#${ROOT_ID} .hs-inbound{grid-column:1/-1;grid-row:2}}
+    #${ROOT_ID} .hs-status{min-height:1.25rem;font-size:.75rem;color:hsl(var(--muted-foreground));padding-top:.25rem}
+    #${ROOT_ID} .hs-status.ok{color:hsl(142 70% 40%)}
+    #${ROOT_ID} .hs-status.err{color:hsl(var(--destructive))}
+    #${HOST_FIELD_ID}{margin-top:1rem}
+    #${HOST_FIELD_ID} .hs-host-label{display:flex;align-items:center;gap:.45rem;margin-bottom:.45rem;font-size:.875rem;font-weight:500}
+    #${HOST_FIELD_ID} .hs-host-badge{font-size:.6rem;line-height:1;padding:.18rem .35rem;border:1px solid rgba(212,167,44,.28);border-radius:999px;color:#a8750a;background:rgba(212,167,44,.07)}
+    #${HOST_FIELD_ID} .hs-host-help{font-size:.75rem;line-height:1.5;color:hsl(var(--muted-foreground));margin-top:.4rem}
   `;
 
-  function injectStyle(){if(document.getElementById(STYLE_ID))return;const s=document.createElement('style');s.id=STYLE_ID;s.textContent=css;document.head.appendChild(s)}
+  function injectStyle(){
+    if(document.getElementById(STYLE_ID))return;
+    const style=document.createElement('style');
+    style.id=STYLE_ID;
+    style.textContent=css;
+    document.head.appendChild(style);
+  }
 
   function authHeaders(extra){
     const headers=new Headers(extra||{});
@@ -53,20 +58,41 @@
     const {headers,...rest}=options;
     const response=await rawFetch(`/api/hs-plugin${path}`,{credentials:'same-origin',...rest,headers:authHeaders(headers)});
     const data=await response.json().catch(()=>({}));
-    if(!response.ok){const error=new Error(data.detail||`HTTP ${response.status}`);error.status=response.status;throw error}
+    if(!response.ok){
+      const error=new Error(data.detail||`HTTP ${response.status}`);
+      error.status=response.status;
+      throw error;
+    }
     return data;
   }
 
-  function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
-  function setStatus(text,kind=''){const el=document.querySelector(`#${ROOT_ID} .hs-status`);if(el){el.textContent=text;el.className=`hs-status ${kind}`}}
+  function setStatus(text,kind=''){
+    const el=document.querySelector(`#${ROOT_ID} .hs-status`);
+    if(!el)return;
+    el.textContent=text||'';
+    el.className=`hs-status ${kind}`;
+  }
 
   async function refreshState(){
-    try{state=await api('/state');ownerAllowed=true;lastError=null;return state}
-    catch(error){lastError=error;ownerAllowed=false;state=null;console.warn('[HS Plugin] state request failed',error);return null}
+    try{
+      state=await api('/state');
+      ownerAllowed=true;
+      lastError=null;
+      return state;
+    }catch(error){
+      lastError=error;
+      ownerAllowed=false;
+      state=null;
+      console.warn('[HS Plugin] state request failed',error);
+      return null;
+    }
   }
 
   function findNodeTopItem(){
-    const link=[...document.querySelectorAll('a')].find(a=>{const href=a.getAttribute('href')||'';return href==='/nodes'||href==='#/nodes'||href.endsWith('#/nodes')});
+    const link=[...document.querySelectorAll('a')].find(a=>{
+      const href=a.getAttribute('href')||'';
+      return href==='/nodes'||href==='#/nodes'||href.endsWith('#/nodes');
+    });
     if(!link)return null;
     let li=link.closest('li');
     if(!li)return null;
@@ -75,89 +101,242 @@
     return li;
   }
 
+  function updateNavActive(){
+    const button=document.querySelector(`#${NAV_ID} [data-sidebar="menu-button"]`);
+    if(button)button.dataset.active=active?'true':'false';
+  }
+
   function ensureNav(){
     if(!ownerAllowed){document.getElementById(NAV_ID)?.remove();return}
-    if(document.getElementById(NAV_ID))return;
-    const nodeItem=findNodeTopItem();if(!nodeItem||!nodeItem.parentElement)return;
-    const li=document.createElement('li');li.id=NAV_ID;li.className=nodeItem.className||'';
-    const btn=document.createElement('button');btn.type='button';btn.className='peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-hidden transition-[width,height,padding] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground';
-    btn.innerHTML='<span class="hs-spark"></span><span class="hs-gold" style="font-weight:750">HS Plugin</span>';
-    btn.addEventListener('click',activate);li.appendChild(btn);nodeItem.after(li);
+    if(document.getElementById(NAV_ID)){updateNavActive();return}
+    const nodeItem=findNodeTopItem();
+    if(!nodeItem||!nodeItem.parentElement)return;
+
+    const li=document.createElement('li');
+    li.id=NAV_ID;
+    li.setAttribute('data-sidebar','menu-item');
+    li.className='group/menu-item relative';
+
+    const button=document.createElement('button');
+    button.type='button';
+    button.setAttribute('data-sidebar','menu-button');
+    button.setAttribute('data-size','default');
+    button.dataset.active=active?'true':'false';
+    button.className=menuButtonClass;
+    button.innerHTML=`${pluginIcon('hs-nav-icon')}<span class="hs-gold">HS Plugin</span>`;
+    button.addEventListener('click',activate);
+
+    li.appendChild(button);
+    nodeItem.after(li);
   }
 
   function getMain(){return document.querySelector('main')||document.querySelector('[role="main"]')}
-  function hideMain(main){[...main.children].forEach(el=>{if(el.id===ROOT_ID)return;if(!el.hasAttribute('data-hs-prev-display'))el.setAttribute('data-hs-prev-display',el.style.display||'');el.style.display='none'})}
-  function restoreMain(main){[...main.querySelectorAll(':scope > [data-hs-prev-display]')].forEach(el=>{el.style.display=el.getAttribute('data-hs-prev-display')||'';el.removeAttribute('data-hs-prev-display')})}
-  function deactivate(){active=false;const main=getMain();if(main)restoreMain(main);document.getElementById(ROOT_ID)?.remove()}
 
-  function hostRows(){
-    if(!state?.hosts?.length)return '<div class="hs-note">No hosts found.</div>';
-    return state.hosts.map(h=>`<div class="hs-host" data-host-id="${h.id}"><div><div class="hs-host-name">${esc(h.remark||`Host #${h.id}`)}</div>${h.shared_inbound?'<span class="hs-shared">Shared inbound · same ratio applies</span>':''}</div><div class="hs-inbound">${esc(h.inbound_tag||'—')}</div><input class="hs-ratio" type="number" min="0" max="100" step="0.05" value="${Number(h.usage_ratio??1)}" ${!h.inbound_tag?'disabled':''}><button class="hs-btn hs-save-ratio" ${!h.inbound_tag?'disabled':''}>Save</button></div>`).join('')
+  function hideMain(main){
+    [...main.children].forEach(el=>{
+      if(el.id===ROOT_ID)return;
+      if(!el.hasAttribute('data-hs-prev-display'))el.setAttribute('data-hs-prev-display',el.style.display||'');
+      el.style.display='none';
+    });
+  }
+
+  function restoreMain(main){
+    [...main.querySelectorAll(':scope > [data-hs-prev-display]')].forEach(el=>{
+      el.style.display=el.getAttribute('data-hs-prev-display')||'';
+      el.removeAttribute('data-hs-prev-display');
+    });
+  }
+
+  function deactivate(){
+    active=false;
+    const main=getMain();
+    if(main)restoreMain(main);
+    document.getElementById(ROOT_ID)?.remove();
+    updateNavActive();
+  }
+
+  function renderSwitch(enabled){
+    const status=enabled?'checked':'unchecked';
+    return `<button id="hs-feature-host-ratio" type="button" role="switch" aria-checked="${enabled?'true':'false'}" data-state="${status}" class="${switchClass}"><span data-state="${status}" class="${switchThumbClass}"></span></button>`;
+  }
+
+  function setSwitchState(button,enabled){
+    const status=enabled?'checked':'unchecked';
+    button.setAttribute('aria-checked',enabled?'true':'false');
+    button.dataset.state=status;
+    const thumb=button.querySelector('span');
+    if(thumb)thumb.dataset.state=status;
   }
 
   function render(){
-    const main=getMain();if(!main)return;hideMain(main);
-    let root=document.getElementById(ROOT_ID);if(!root){root=document.createElement('section');root.id=ROOT_ID;main.appendChild(root)}
+    const main=getMain();
+    if(!main)return;
+    hideMain(main);
+
+    let root=document.getElementById(ROOT_ID);
+    if(!root){
+      root=document.createElement('section');
+      root.id=ROOT_ID;
+      main.appendChild(root);
+    }
+
     const enabled=!!state?.features?.host_usage_ratio?.enabled;
-    root.innerHTML=`<div class="hs-hero"><div><h2 class="hs-title hs-gold">HS Plugin</h2><div class="hs-sub">Update-safe extensions for PasarGuard · authenticated through the active panel session.</div></div><span class="hs-version">v${VERSION}</span></div><div class="hs-card"><div class="hs-card-head"><div><div class="hs-card-title">Host Usage Ratio</div><div class="hs-note">Applies a traffic multiplier per Host/inbound before PasarGuard's native Node Usage Ratio. Hosts sharing one inbound must share the same ratio.</div></div><input id="hs-feature-host-ratio" class="hs-toggle" type="checkbox" ${enabled?'checked':''}></div><div class="hs-hosts">${hostRows()}</div><div class="hs-status"></div></div>`;
-    root.querySelector('#hs-feature-host-ratio')?.addEventListener('change',async e=>{
-      if(busy)return;busy=true;e.target.disabled=true;setStatus('Applying feature state and syncing nodes…');
-      try{await api('/features/host_usage_ratio',{method:'PUT',body:JSON.stringify({enabled:e.target.checked})});await api('/resync',{method:'POST',body:'{}'});await refreshState();render()}
-      catch(err){setStatus(err.message,'err');e.target.checked=!e.target.checked}finally{busy=false;e.target.disabled=false}
+    root.innerHTML=`
+      <div class="flex min-h-[calc(100vh-200px)] w-full flex-col">
+        <div class="flex flex-1 flex-col p-4 sm:py-6 lg:py-8">
+          <div class="flex-1 space-y-6 sm:space-y-8 lg:space-y-10">
+            <div class="space-y-3">
+              <div class="space-y-2">
+                <h3 class="text-base font-semibold sm:text-lg">HS Plugin</h3>
+                <p class="text-muted-foreground text-xs sm:text-sm">Extensions for PasarGuard. Enable or disable each HS feature from here.</p>
+              </div>
+
+              <div class="bg-card hover:bg-accent/50 flex flex-row items-center justify-between space-y-0 gap-x-3 rounded-lg border p-3 transition-colors sm:p-4">
+                <div class="space-y-0.5">
+                  <div class="flex items-center gap-2 text-xs font-medium sm:text-sm">
+                    ${pluginIcon('hs-nav-icon h-4 w-4')}
+                    <span>Host Usage Ratio</span>
+                  </div>
+                  <p class="text-muted-foreground text-xs sm:text-sm">Adds the Usage Ratio field to Hosts and applies it to traffic accounting.</p>
+                </div>
+                ${renderSwitch(enabled)}
+              </div>
+
+              <div class="hs-status"></div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    const toggle=root.querySelector('#hs-feature-host-ratio');
+    toggle?.addEventListener('click',async()=>{
+      if(busy)return;
+      const current=toggle.getAttribute('aria-checked')==='true';
+      const next=!current;
+      busy=true;
+      toggle.disabled=true;
+      setSwitchState(toggle,next);
+      setStatus('Applying changes…');
+      try{
+        await api('/features/host_usage_ratio',{method:'PUT',body:JSON.stringify({enabled:next})});
+        await api('/resync',{method:'POST',body:'{}'});
+        await refreshState();
+        if(!next)document.querySelectorAll(`#${HOST_FIELD_ID}`).forEach(el=>el.remove());
+        setStatus('Changes applied.','ok');
+      }catch(error){
+        setSwitchState(toggle,current);
+        setStatus(error.message,'err');
+      }finally{
+        busy=false;
+        toggle.disabled=false;
+      }
     });
-    root.querySelectorAll('.hs-save-ratio').forEach(btn=>btn.addEventListener('click',async()=>{
-      if(busy)return;const row=btn.closest('.hs-host');const input=row.querySelector('.hs-ratio');const hostId=Number(row.dataset.hostId);const ratio=Number(input.value);
-      if(!Number.isFinite(ratio)||ratio<0||ratio>100){setStatus('Ratio must be between 0 and 100.','err');return}
-      busy=true;btn.disabled=true;setStatus(`Saving Host #${hostId} and syncing nodes…`);
-      try{await api(`/hosts/${hostId}/usage-ratio`,{method:'PUT',body:JSON.stringify({ratio})});await api('/resync',{method:'POST',body:'{}'});await refreshState();render()}
-      catch(err){setStatus(err.message,'err')}finally{busy=false;btn.disabled=false}
-    }));
   }
 
-  async function activate(){active=true;if(!state)await refreshState();if(!ownerAllowed){console.warn('[HS Plugin] unavailable',lastError);return}render()}
+  async function activate(){
+    active=true;
+    updateNavActive();
+    if(!state)await refreshState();
+    if(!ownerAllowed){
+      console.warn('[HS Plugin] unavailable',lastError);
+      active=false;
+      updateNavActive();
+      return;
+    }
+    render();
+  }
 
   function matchEditingHost(dialog){
     if(!state?.hosts?.length)return null;
-    const remark=dialog.querySelector('input[name="remark"]')?.value;if(!remark)return null;
-    const candidates=state.hosts.filter(h=>String(h.remark||'')===remark);return candidates.length===1?candidates[0]:null;
+    const remark=dialog.querySelector('input[name="remark"]')?.value;
+    if(!remark)return null;
+    const candidates=state.hosts.filter(h=>String(h.remark||'')===remark);
+    return candidates.length===1?candidates[0]:null;
   }
 
   function injectHostField(dialog){
     if(!ownerAllowed||!state?.features?.host_usage_ratio?.enabled||dialog.querySelector(`#${HOST_FIELD_ID}`))return;
-    const form=dialog.querySelector('form');if(!form||!form.querySelector('input[name="remark"]'))return;
+    const form=dialog.querySelector('form');
+    if(!form||!form.querySelector('input[name="remark"]'))return;
+
     const scroll=[...form.querySelectorAll('div')].find(el=>el.children.length>1&&/overflow-y-auto/.test(el.className||''));
-    const container=scroll||form;const first=container.firstElementChild;if(!first)return;
-    const editing=matchEditingHost(dialog);const ratio=Number(editing?.usage_ratio??1);
-    const wrap=document.createElement('div');wrap.id=HOST_FIELD_ID;wrap.dataset.hostId=editing?.id||'';
-    wrap.innerHTML=`<label class="hs-host-label"><span class="hs-gold">Usage Ratio</span><span class="hs-host-badge">HS</span></label><input type="number" min="0" max="100" step="0.05" value="${ratio}"><div class="hs-host-help">Traffic multiplier for this Host. Final usage = Host Ratio × native Node Ratio.</div>`;
-    wrap.querySelector('input').addEventListener('input',()=>wrap.dataset.dirty='1');first.after(wrap);
+    const container=scroll||form;
+    const first=container.firstElementChild;
+    if(!first)return;
+
+    const editing=matchEditingHost(dialog);
+    const ratio=Number(editing?.usage_ratio??1);
+    const wrap=document.createElement('div');
+    wrap.id=HOST_FIELD_ID;
+    wrap.dataset.hostId=editing?.id||'';
+    wrap.innerHTML=`
+      <label class="hs-host-label"><span class="hs-gold">Usage Ratio</span><span class="hs-host-badge">HS</span></label>
+      <input class="${inputClass}" dir="ltr" type="number" min="0" max="100" step="0.05" value="${ratio}">
+      <div class="hs-host-help">Traffic multiplier for this Host. Final usage = Host Ratio × native Node Ratio.</div>`;
+    wrap.querySelector('input').addEventListener('input',()=>wrap.dataset.dirty='1');
+    first.after(wrap);
   }
 
-  function scanHostDialogs(){document.querySelectorAll('[role="dialog"]').forEach(injectHostField)}
+  function scanHostDialogs(){
+    if(!state?.features?.host_usage_ratio?.enabled){
+      document.querySelectorAll(`#${HOST_FIELD_ID}`).forEach(el=>el.remove());
+      return;
+    }
+    document.querySelectorAll('[role="dialog"]').forEach(injectHostField);
+  }
 
   function installHostSaveBridge(){
-    if(window.__hsPluginFetchBridge)return;window.__hsPluginFetchBridge=true;
+    if(window.__hsPluginFetchBridge)return;
+    window.__hsPluginFetchBridge=true;
+
     window.fetch=async(input,init={})=>{
-      const requestUrl=typeof input==='string'?input:(input?.url||'');const method=(init.method||(input?.method)||'GET').toUpperCase();
-      const field=document.querySelector(`#${HOST_FIELD_ID}[data-dirty="1"]`);const pending=field?{ratio:Number(field.querySelector('input')?.value),hostId:Number(field.dataset.hostId||0)}:null;
+      const requestUrl=typeof input==='string'?input:(input?.url||'');
+      const method=(init.method||(input?.method)||'GET').toUpperCase();
+      const field=document.querySelector(`#${HOST_FIELD_ID}[data-dirty="1"]`);
+      const pending=field?{ratio:Number(field.querySelector('input')?.value),hostId:Number(field.dataset.hostId||0)}:null;
       const response=await rawFetch(input,init);
+
       if(response.ok&&pending&&Number.isFinite(pending.ratio)&&((method==='POST'&&/\/api\/host\/?(?:\?|$)/.test(requestUrl))||(method==='PUT'&&/\/api\/host\/\d+/.test(requestUrl)))){
         try{
-          const payload=await response.clone().json();const hostId=Number(payload?.id||pending.hostId);
-          if(hostId){await rawFetch(`/api/hs-plugin/hosts/${hostId}/usage-ratio`,{method:'PUT',credentials:'same-origin',headers:authHeaders(),body:JSON.stringify({ratio:pending.ratio})});await rawFetch('/api/hs-plugin/resync',{method:'POST',credentials:'same-origin',headers:authHeaders(),body:'{}'});field.dataset.dirty='0';refreshState().catch(()=>{})}
-        }catch(error){console.warn('[HS Plugin] Host follow-up failed',error)}
+          const payload=await response.clone().json();
+          const hostId=Number(payload?.id||pending.hostId);
+          if(hostId){
+            await rawFetch(`/api/hs-plugin/hosts/${hostId}/usage-ratio`,{method:'PUT',credentials:'same-origin',headers:authHeaders(),body:JSON.stringify({ratio:pending.ratio})});
+            await rawFetch('/api/hs-plugin/resync',{method:'POST',credentials:'same-origin',headers:authHeaders(),body:'{}'});
+            field.dataset.dirty='0';
+            refreshState().catch(()=>{});
+          }
+        }catch(error){
+          console.warn('[HS Plugin] Host follow-up failed',error);
+        }
       }
       return response;
     };
   }
 
-  function maintain(){queued=false;injectStyle();ensureNav();scanHostDialogs();if(active&&!document.getElementById(ROOT_ID))render()}
-  function queueMaintain(){if(queued)return;queued=true;requestAnimationFrame(maintain)}
+  function maintain(){
+    queued=false;
+    injectStyle();
+    ensureNav();
+    scanHostDialogs();
+    if(active&&!document.getElementById(ROOT_ID))render();
+  }
+
+  function queueMaintain(){
+    if(queued)return;
+    queued=true;
+    requestAnimationFrame(maintain);
+  }
 
   async function boot(){
-    injectStyle();installHostSaveBridge();await refreshState();maintain();
+    injectStyle();
+    installHostSaveBridge();
+    await refreshState();
+    maintain();
     new MutationObserver(queueMaintain).observe(document.documentElement,{childList:true,subtree:true});
-    document.addEventListener('click',e=>{if(active&&!e.target.closest(`#${NAV_ID}`)&&e.target.closest('a'))deactivate()},true);
+    document.addEventListener('click',event=>{
+      if(active&&!event.target.closest(`#${NAV_ID}`)&&event.target.closest('a'))deactivate();
+    },true);
     setInterval(()=>refreshState().then(queueMaintain),60000);
   }
 
