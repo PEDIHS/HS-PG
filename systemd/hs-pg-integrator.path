@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch PasarGuard compose file for HS Plugin reintegration
+
+[Path]
+PathChanged=/opt/pasarguard/docker-compose.yml
+Unit=hs-pg-integrator.service
+
+[Install]
+WantedBy=multi-user.target
