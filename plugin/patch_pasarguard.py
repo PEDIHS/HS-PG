@@ -23,10 +23,7 @@ def ensure_import(text: str, import_line: str, anchor: str, label: str) -> str:
 
 
 def _strip_marked_block(text: str, start: str, end: str) -> str:
-    pattern = re.compile(
-        rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?",
-        re.S,
-    )
+    pattern = re.compile(rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?", re.S)
     return pattern.sub("\n", text)
 
 
@@ -52,18 +49,12 @@ def _routers_assignment_end(text: str) -> int:
 
 
 def patch_router(text: str) -> str:
-    """Register HS router without owning or rewriting PasarGuard's router loop.
-
-    Other extensions (notably Zomorod) may wrap ``for router in routers`` with
-    their own expression. Rewriting that loop makes plugins fight each other.
-    HS therefore only inserts its router into the existing ``routers`` list.
-    """
+    """Register HS router without owning or rewriting PasarGuard's router loop."""
     import_start = "# hs-plugin-router-start"
     import_end = "# hs-plugin-router-end"
     register_start = "# hs-plugin-router-register-start"
     register_end = "# hs-plugin-router-register-end"
 
-    # Already healthy: do not rewrite whitespace on every integrator run.
     if (
         import_start in text
         and import_end in text
@@ -73,8 +64,6 @@ def patch_router(text: str) -> str:
     ):
         return text
 
-    # Repair any previous HS integration attempt while leaving foreign plugin
-    # loop wrappers untouched.
     text = _strip_marked_block(text, import_start, import_end)
     text = _strip_marked_block(text, register_start, register_end)
     text = text.replace(
@@ -95,8 +84,6 @@ def patch_router(text: str) -> str:
     )
     text = text.replace("api_router = APIRouter()", import_block + "api_router = APIRouter()", 1)
 
-    # Find the routers assignment structurally, so this remains compatible with
-    # upstream formatting changes and with Zomorod's custom router loop.
     insert_at = _routers_assignment_end(text)
     register_block = (
         "\n"
@@ -105,8 +92,7 @@ def patch_router(text: str) -> str:
         "    routers.insert(0, hs_plugin_api.router)\n"
         f"{register_end}\n"
     )
-    text = text[:insert_at] + register_block + text[insert_at:]
-    return text
+    return text[:insert_at] + register_block + text[insert_at:]
 
 
 def patch_user(text: str) -> str:
@@ -164,15 +150,21 @@ def patch_sync(text: str) -> str:
 
 
 def patch_usage(text: str) -> str:
+    """Patch usage accounting so Host Ratio is the final effective coefficient.
+
+    Native traffic keeps PasarGuard's Node ``usage_coefficient``. HS aliases
+    carry an ``hs_effective_ratio`` value; every place that normally multiplies
+    by the node coefficient instead uses that value. This prevents accidental
+    multiplication such as Node 2 × Host 2.7 = 5.4.
+    """
     text = ensure_import(
         text,
         "from app.hs_plugin_runtime import decode_usage_identity\n",
         "from app.utils.logger import get_logger\n",
         "usage runtime import",
     )
-    if "# hs-plugin-usage:" in text:
-        return text
-    old = '''    validated_params = []
+
+    original = '''    validated_params = []
     invalid_uids = []
     for uid, value in params.items():
         try:
@@ -180,7 +172,7 @@ def patch_usage(text: str) -> str:
         except ValueError, TypeError:
             invalid_uids.append(uid)
 '''
-    new = '''    validated_params = []
+    legacy = '''    validated_params = []
     invalid_uids = []
     for uid, value in params.items():
         try:
@@ -190,7 +182,49 @@ def patch_usage(text: str) -> str:
         except (ValueError, TypeError):
             invalid_uids.append(uid)
 '''
-    return replace_once(text, old, new, "record usage")
+    desired = '''    validated_params = []
+    invalid_uids = []
+    for uid, value in params.items():
+        try:
+            # hs-plugin-usage: Host Ratio is the final effective ratio, not a secondary multiplier.
+            native_uid, effective_ratio = decode_usage_identity(uid)
+            param = {"uid": native_uid, "value": value}
+            if effective_ratio is not None:
+                param["hs_effective_ratio"] = effective_ratio
+            validated_params.append(param)
+        except (ValueError, TypeError):
+            invalid_uids.append(uid)
+'''
+
+    if desired not in text:
+        if legacy in text:
+            text = text.replace(legacy, desired, 1)
+        else:
+            text = replace_once(text, original, desired, "record usage identity")
+
+    coefficient_replacements = [
+        (
+            '        value = int(param["value"] * coeff)\n',
+            '        value = int(param["value"] * param.get("hs_effective_ratio", coeff))\n',
+            "threaded usage coefficient",
+        ),
+        (
+            '                    "value": int(p["value"] * coeff),\n',
+            '                    "value": int(p["value"] * p.get("hs_effective_ratio", coeff)),\n',
+            "node usage log coefficient",
+        ),
+        (
+            '                value = int(param["value"] * coeff)\n',
+            '                value = int(param["value"] * param.get("hs_effective_ratio", coeff))\n',
+            "sync usage coefficient",
+        ),
+    ]
+    for old, new, label in coefficient_replacements:
+        if new in text:
+            continue
+        text = replace_once(text, old, new, label)
+
+    return text
 
 
 def patch_operation_node(text: str) -> str:
