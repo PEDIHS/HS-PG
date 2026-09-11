@@ -1,9 +1,10 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.1';
+  const VERSION = '0.4.0';
   const STYLE_ID = 'hs-node-pro-style';
   const BLOCK_CLASS = 'hs-node-pro';
+  const CARD_CLASS = 'hs-node-pro-card';
   const rawFetch = window.fetch.bind(window);
 
   let enabled = false;
@@ -13,25 +14,64 @@
   let nodesCache = [];
   let statsCache = {};
   let busy = false;
+  const history = new Map();
 
   const css = `
-    .${BLOCK_CLASS}{margin-top:.7rem;padding-top:.78rem;border-top:1px solid color-mix(in srgb,var(--border) 72%,transparent);pointer-events:none}
-    .${BLOCK_CLASS}-meters{display:grid;gap:.62rem}
-    .${BLOCK_CLASS}-row{display:grid;grid-template-columns:44px minmax(90px,1fr) auto;align-items:center;gap:.65rem;font-size:11px;line-height:1}
-    .${BLOCK_CLASS}-label{display:flex;align-items:center;gap:.34rem;color:var(--muted-foreground);font-weight:650;letter-spacing:.01em}
-    .${BLOCK_CLASS}-value{display:flex;align-items:baseline;gap:.3rem;color:var(--foreground);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
-    .${BLOCK_CLASS}-value-sub{color:var(--muted-foreground);font-size:9px;font-weight:500}
-    .${BLOCK_CLASS}-track{position:relative;height:5px;overflow:hidden;border-radius:999px;background:color-mix(in srgb,var(--muted) 84%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--border) 22%,transparent)}
-    .${BLOCK_CLASS}-fill{height:100%;min-width:0;border-radius:inherit;background:linear-gradient(90deg,#20c997 0%,color-mix(in srgb,var(--primary) 82%,#3b82f6) 100%);box-shadow:0 0 8px color-mix(in srgb,var(--primary) 22%,transparent);transition:width .35s ease}
-    .${BLOCK_CLASS}-meta{display:flex;align-items:center;flex-wrap:wrap;gap:.34rem .75rem;margin-top:.72rem;color:var(--muted-foreground);font-size:9.5px;line-height:1.3;font-variant-numeric:tabular-nums}
-    .${BLOCK_CLASS}-meta-item{display:inline-flex;align-items:center;gap:.28rem;white-space:nowrap}
-    .${BLOCK_CLASS}-meta-item strong{color:var(--foreground);font-size:10px;font-weight:600}
-    .${BLOCK_CLASS}-meta-dot{width:2px;height:2px;border-radius:999px;background:color-mix(in srgb,var(--muted-foreground) 55%,transparent)}
-    .${BLOCK_CLASS}-error{color:var(--muted-foreground);font-size:10px;padding:.12rem 0}
+    .${CARD_CLASS}{
+      grid-column:1/-1!important;
+      border-radius:24px!important;
+      border:1px solid rgba(255,255,255,.065)!important;
+      background:linear-gradient(145deg,rgba(22,31,42,.96),rgba(13,19,26,.98))!important;
+      box-shadow:0 20px 58px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.025)!important;
+      overflow:hidden!important;
+      transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease!important;
+    }
+    .${CARD_CLASS}:hover{border-color:rgba(255,255,255,.095)!important;box-shadow:0 24px 64px rgba(0,0,0,.34),inset 0 1px rgba(255,255,255,.03)!important}
+    .${CARD_CLASS}>div.p-3{padding:22px!important}
+    .${BLOCK_CLASS}{margin-top:1rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,.065);pointer-events:none;color:#f5f7fa}
+    .${BLOCK_CLASS}-top{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
+    .${BLOCK_CLASS}-bottom{display:grid;grid-template-columns:1.2fr 1.2fr .8fr;gap:14px}
+    .${BLOCK_CLASS}-box{position:relative;min-width:0;min-height:132px;padding:18px;border-radius:18px;border:1px solid rgba(255,255,255,.065);background:linear-gradient(145deg,rgba(255,255,255,.025),rgba(255,255,255,.01));overflow:hidden;box-shadow:inset 0 1px rgba(255,255,255,.015)}
+    .${BLOCK_CLASS}-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+    .${BLOCK_CLASS}-title{display:flex;align-items:center;gap:8px;color:#e6edf5;font-size:13px;font-weight:650}
+    .${BLOCK_CLASS}-title svg{color:#9eacc0;flex:none}
+    .${BLOCK_CLASS}-value{text-align:right;color:#f5f7fa;font-size:17px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap}
+    .${BLOCK_CLASS}-sub{display:block;margin-top:4px;color:#8996aa;font-size:11px;font-weight:500}
+    .${BLOCK_CLASS}-spark{position:absolute;left:18px;right:18px;bottom:14px;height:48px;opacity:.95}
+    .${BLOCK_CLASS}-spark svg{display:block;width:100%;height:100%;overflow:visible}
+    .${BLOCK_CLASS}-spark path{fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+    .${BLOCK_CLASS}-spark.green path{stroke:#38e88c;filter:drop-shadow(0 0 5px rgba(56,232,140,.32))}
+    .${BLOCK_CLASS}-spark.purple path{stroke:#9c86ff;filter:drop-shadow(0 0 5px rgba(156,134,255,.30))}
+    .${BLOCK_CLASS}-spark.blue path{stroke:#43a7ff;filter:drop-shadow(0 0 5px rgba(67,167,255,.30))}
+    .${BLOCK_CLASS}-box-title{display:flex;align-items:center;gap:8px;margin-bottom:21px;color:#e6edf5;font-size:13px;font-weight:650}
+    .${BLOCK_CLASS}-box-title svg{color:#9eacc0}
+    .${BLOCK_CLASS}-dual{display:grid;grid-template-columns:1fr 1fr;min-width:0}
+    .${BLOCK_CLASS}-dual-item{position:relative;min-width:0;padding-right:16px}
+    .${BLOCK_CLASS}-dual-item+ .${BLOCK_CLASS}-dual-item{padding-right:0;padding-left:16px;border-left:1px solid rgba(255,255,255,.07)}
+    .${BLOCK_CLASS}-small-label{display:flex;align-items:center;gap:6px;color:#8996aa;font-size:10.5px;font-weight:550}
+    .${BLOCK_CLASS}-arrow-down{color:#43a7ff;font-size:15px;line-height:1}
+    .${BLOCK_CLASS}-arrow-up{color:#38e88c;font-size:15px;line-height:1}
+    .${BLOCK_CLASS}-data{margin-top:6px;color:#f5f7fa;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .${BLOCK_CLASS}-small-chart{height:29px;margin-top:10px}
+    .${BLOCK_CLASS}-small-chart svg{display:block;width:100%;height:100%;overflow:visible}
+    .${BLOCK_CLASS}-small-chart path{fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+    .${BLOCK_CLASS}-uptime-grid{display:grid;grid-template-columns:1fr 1fr;margin-top:27px}
+    .${BLOCK_CLASS}-uptime-item{min-width:0}
+    .${BLOCK_CLASS}-uptime-item+ .${BLOCK_CLASS}-uptime-item{border-left:1px solid rgba(255,255,255,.07);padding-left:16px}
+    .${BLOCK_CLASS}-uptime-label{color:#8996aa;font-size:10.5px}
+    .${BLOCK_CLASS}-uptime-value{margin-top:7px;color:#f5f7fa;font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .${BLOCK_CLASS}-error{color:#8996aa;font-size:11px;padding:.2rem 0}
+    @media(max-width:900px){
+      .${BLOCK_CLASS}-bottom{grid-template-columns:1fr 1fr}
+      .${BLOCK_CLASS}-bottom>.${BLOCK_CLASS}-box:last-child{grid-column:1/-1}
+    }
     @media(max-width:640px){
-      .${BLOCK_CLASS}-row{grid-template-columns:40px minmax(70px,1fr) auto;gap:.5rem}
-      .${BLOCK_CLASS}-meta{gap:.35rem .6rem}
-      .${BLOCK_CLASS}-meta-dot{display:none}
+      .${CARD_CLASS}{border-radius:20px!important}
+      .${CARD_CLASS}>div.p-3{padding:16px!important}
+      .${BLOCK_CLASS}-top,.${BLOCK_CLASS}-bottom{grid-template-columns:1fr}
+      .${BLOCK_CLASS}-bottom>.${BLOCK_CLASS}-box:last-child{grid-column:auto}
+      .${BLOCK_CLASS}-box{min-height:124px;padding:16px;border-radius:16px}
+      .${BLOCK_CLASS}-spark{left:16px;right:16px}
     }
   `;
 
@@ -93,11 +133,40 @@
     return `${minutes}m`;
   }
 
-  const icon = (path) => `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+  function remember(nodeId, key, value) {
+    const id = String(nodeId);
+    if (!history.has(id)) history.set(id, {});
+    const bucket = history.get(id);
+    if (!Array.isArray(bucket[key])) bucket[key] = [];
+    bucket[key].push(Number(value) || 0);
+    if (bucket[key].length > 18) bucket[key].shift();
+    return bucket[key];
+  }
+
+  function sparkPath(values, width = 300, height = 58, pad = 4) {
+    const points = Array.isArray(values) && values.length ? values : [0, 0];
+    const min = Math.min(...points);
+    const max = Math.max(...points);
+    const range = Math.max(1, max - min);
+    const step = points.length > 1 ? (width - pad * 2) / (points.length - 1) : 0;
+    return points.map((value, index) => {
+      const x = pad + index * step;
+      const y = height - pad - ((value - min) / range) * (height - pad * 2);
+      return `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
+    }).join(' ');
+  }
+
+  function spark(values, tone = 'blue', small = false) {
+    const w = small ? 180 : 300;
+    const h = small ? 35 : 58;
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${sparkPath(values, w, h, 3)}"/></svg>`;
+  }
+
+  const icon = (path, size = 15) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
   const cpuIcon = icon('<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>');
   const ramIcon = icon('<path d="M2 12h20M6 12v4M10 12v4M14 12v4M18 12v4M4 8h16a2 2 0 0 1 2 2v6H2v-6a2 2 0 0 1 2-2Z"/>');
-  const downIcon = icon('<path d="M12 3v14M6 11l6 6 6-6"/>');
-  const upIcon = icon('<path d="M12 21V7M18 13l-6-6-6 6"/>');
+  const networkIcon = icon('<circle cx="12" cy="12" r="3"/><path d="M2 12h7M15 12h7M12 2v7M12 15v7"/>');
+  const trafficIcon = icon('<path d="M7 7h11l-3-3M17 17H6l3 3"/>');
   const clockIcon = icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
 
   function cardForNode(node) {
@@ -118,13 +187,11 @@
     return [...direct.children].find(el => el.tagName === 'DIV' && el.classList.contains('min-w-0') && el.classList.contains('flex-1')) || null;
   }
 
-  function metaDot() {
-    return `<span class="${BLOCK_CLASS}-meta-dot" aria-hidden="true"></span>`;
-  }
-
   function renderNode(node, stats) {
     const card = cardForNode(node);
     if (!card) return false;
+    card.classList.add(CARD_CLASS);
+
     const content = contentForCard(card);
     if (!content) return false;
 
@@ -143,42 +210,96 @@
 
     const cpu = clamp(stats.cpu_usage);
     const ramPct = stats.mem_total ? clamp((Number(stats.mem_used) / Number(stats.mem_total)) * 100) : 0;
+    const rx = Number(stats.incoming_bandwidth_speed) || 0;
+    const tx = Number(stats.outgoing_bandwidth_speed) || 0;
     const sessionDown = Number(node.downlink) || 0;
     const sessionUp = Number(node.uplink) || 0;
     const lifetimeDown = Number(node.lifetime_downlink) || 0;
     const lifetimeUp = Number(node.lifetime_uplink) || 0;
     const lifetimeTotal = lifetimeDown + lifetimeUp;
 
+    const cpuHistory = remember(node.id, 'cpu', cpu);
+    const ramHistory = remember(node.id, 'ram', ramPct);
+    const rxHistory = remember(node.id, 'rx', rx);
+    const txHistory = remember(node.id, 'tx', tx);
+    const downHistory = remember(node.id, 'down', sessionDown);
+    const upHistory = remember(node.id, 'up', sessionUp);
+
     block.innerHTML = `
-      <div class="${BLOCK_CLASS}-meters">
-        <div class="${BLOCK_CLASS}-row">
-          <div class="${BLOCK_CLASS}-label">${cpuIcon}<span>CPU</span></div>
-          <div class="${BLOCK_CLASS}-track"><div class="${BLOCK_CLASS}-fill" style="width:${cpu.toFixed(1)}%"></div></div>
-          <div class="${BLOCK_CLASS}-value"><span>${cpu.toFixed(cpu < 10 ? 1 : 0)}%</span><span class="${BLOCK_CLASS}-value-sub">${Number(stats.cpu_cores) || 0}c</span></div>
+      <div class="${BLOCK_CLASS}-top">
+        <div class="${BLOCK_CLASS}-box">
+          <div class="${BLOCK_CLASS}-head">
+            <div class="${BLOCK_CLASS}-title">${cpuIcon}<span>CPU</span></div>
+            <div class="${BLOCK_CLASS}-value">${cpu.toFixed(cpu < 10 ? 1 : 0)}%<span class="${BLOCK_CLASS}-sub">${Number(stats.cpu_cores) || 0} cores</span></div>
+          </div>
+          <div class="${BLOCK_CLASS}-spark green">${spark(cpuHistory, 'green')}</div>
         </div>
-        <div class="${BLOCK_CLASS}-row">
-          <div class="${BLOCK_CLASS}-label">${ramIcon}<span>RAM</span></div>
-          <div class="${BLOCK_CLASS}-track"><div class="${BLOCK_CLASS}-fill" style="width:${ramPct.toFixed(1)}%"></div></div>
-          <div class="${BLOCK_CLASS}-value"><span>${formatBytes(stats.mem_used)}</span><span class="${BLOCK_CLASS}-value-sub">/ ${formatBytes(stats.mem_total)}</span></div>
+
+        <div class="${BLOCK_CLASS}-box">
+          <div class="${BLOCK_CLASS}-head">
+            <div class="${BLOCK_CLASS}-title">${ramIcon}<span>RAM</span></div>
+            <div class="${BLOCK_CLASS}-value">${formatBytes(stats.mem_used)}<span class="${BLOCK_CLASS}-sub">/ ${formatBytes(stats.mem_total)} · ${ramPct.toFixed(0)}%</span></div>
+          </div>
+          <div class="${BLOCK_CLASS}-spark purple">${spark(ramHistory, 'purple')}</div>
         </div>
       </div>
-      <div class="${BLOCK_CLASS}-meta">
-        <span class="${BLOCK_CLASS}-meta-item">${downIcon}<span>RX</span><strong>${formatRate(stats.incoming_bandwidth_speed)}</strong></span>
-        ${metaDot()}
-        <span class="${BLOCK_CLASS}-meta-item">${upIcon}<span>TX</span><strong>${formatRate(stats.outgoing_bandwidth_speed)}</strong></span>
-        ${metaDot()}
-        <span class="${BLOCK_CLASS}-meta-item"><span>↓</span><strong>${formatBytes(sessionDown)}</strong></span>
-        ${metaDot()}
-        <span class="${BLOCK_CLASS}-meta-item"><span>↑</span><strong>${formatBytes(sessionUp)}</strong></span>
-        ${metaDot()}
-        <span class="${BLOCK_CLASS}-meta-item">${clockIcon}<strong>${formatUptime(stats.uptime)}</strong></span>
-        ${lifetimeTotal ? `${metaDot()}<span class="${BLOCK_CLASS}-meta-item"><span>Life</span><strong>${formatBytes(lifetimeTotal)}</strong></span>` : ''}
+
+      <div class="${BLOCK_CLASS}-bottom">
+        <div class="${BLOCK_CLASS}-box">
+          <div class="${BLOCK_CLASS}-box-title">${networkIcon}<span>Network</span></div>
+          <div class="${BLOCK_CLASS}-dual">
+            <div class="${BLOCK_CLASS}-dual-item">
+              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-arrow-down">↓</span><span>RX</span></div>
+              <div class="${BLOCK_CLASS}-data">${formatRate(rx)}</div>
+              <div class="${BLOCK_CLASS}-small-chart blue">${spark(rxHistory, 'blue', true)}</div>
+            </div>
+            <div class="${BLOCK_CLASS}-dual-item">
+              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-arrow-up">↑</span><span>TX</span></div>
+              <div class="${BLOCK_CLASS}-data">${formatRate(tx)}</div>
+              <div class="${BLOCK_CLASS}-small-chart green">${spark(txHistory, 'green', true)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="${BLOCK_CLASS}-box">
+          <div class="${BLOCK_CLASS}-box-title">${trafficIcon}<span>Total Traffic</span></div>
+          <div class="${BLOCK_CLASS}-dual">
+            <div class="${BLOCK_CLASS}-dual-item">
+              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-arrow-down">↓</span><span>Downloaded</span></div>
+              <div class="${BLOCK_CLASS}-data">${formatBytes(sessionDown)}</div>
+              <div class="${BLOCK_CLASS}-small-chart blue">${spark(downHistory, 'blue', true)}</div>
+            </div>
+            <div class="${BLOCK_CLASS}-dual-item">
+              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-arrow-up">↑</span><span>Uploaded</span></div>
+              <div class="${BLOCK_CLASS}-data">${formatBytes(sessionUp)}</div>
+              <div class="${BLOCK_CLASS}-small-chart green">${spark(upHistory, 'green', true)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="${BLOCK_CLASS}-box">
+          <div class="${BLOCK_CLASS}-box-title">${clockIcon}<span>Uptime & Life</span></div>
+          <div class="${BLOCK_CLASS}-uptime-grid">
+            <div class="${BLOCK_CLASS}-uptime-item">
+              <div class="${BLOCK_CLASS}-uptime-label">Uptime</div>
+              <div class="${BLOCK_CLASS}-uptime-value">${formatUptime(stats.uptime)}</div>
+            </div>
+            <div class="${BLOCK_CLASS}-uptime-item">
+              <div class="${BLOCK_CLASS}-uptime-label">Life</div>
+              <div class="${BLOCK_CLASS}-uptime-value">${lifetimeTotal ? formatBytes(lifetimeTotal) : '—'}</div>
+            </div>
+          </div>
+        </div>
       </div>`;
+
+    block.querySelectorAll(`.${BLOCK_CLASS}-small-chart.blue path`).forEach(path => { path.style.stroke = '#43a7ff'; path.style.filter = 'drop-shadow(0 0 4px rgba(67,167,255,.28))'; });
+    block.querySelectorAll(`.${BLOCK_CLASS}-small-chart.green path`).forEach(path => { path.style.stroke = '#38e88c'; path.style.filter = 'drop-shadow(0 0 4px rgba(56,232,140,.28))'; });
     return true;
   }
 
   function removeBlocks() {
     document.querySelectorAll(`.${BLOCK_CLASS}`).forEach(el => el.remove());
+    document.querySelectorAll(`.${CARD_CLASS}`).forEach(el => el.classList.remove(CARD_CLASS));
   }
 
   function renderAll() {
