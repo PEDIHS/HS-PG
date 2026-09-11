@@ -1,14 +1,15 @@
 """Validated nftables policy; owns only inet hs_plugin, never the host ruleset."""
 
 from __future__ import annotations
+
 import hashlib
 import ipaddress
 import json
-import shutil
-import secrets
 import os
-import tempfile
+import secrets
+import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -74,6 +75,12 @@ def validate_policy(raw):
 
 
 def render_policy(policy, exists=False, elevated=False):
+    """Render a deliberately small INPUT chain.
+
+    PasarGuard/Xray VPN payload is latency-sensitive. Avoid an unconditional conntrack
+    lookup and per-packet counters in the HS chain; explicit rules and SYN meters are
+    enough for this feature and the chain remains policy-accept/fail-open.
+    """
     p = validate_policy(policy)
     lines = [f"delete table inet {TABLE}"] if exists else []
     lines += [
@@ -81,7 +88,6 @@ def render_policy(policy, exists=False, elevated=False):
         " chain input {",
         "  type filter hook input priority -10; policy accept;",
         '  iifname "lo" accept',
-        "  ct state established,related accept",
         "  tcp dport { " + ", ".join(map(str, p["management_ports"])) + " } accept",
     ]
     # Explicit allows take priority regardless of UI row ordering.
@@ -95,17 +101,14 @@ def render_policy(policy, exists=False, elevated=False):
                 match += f" meta l4proto {r['protocol']}"
             if r["port"] is not None:
                 match += f" {r['protocol']} dport {r['port']}"
-            lines.append(
-                f"  {match} counter {'accept' if action == 'allow' else 'drop'}"
-            )
+            lines.append(f"  {match} {'accept' if action == 'allow' else 'drop'}")
     if elevated and p["syn_ports"]:
         ports = ", ".join(map(str, p["syn_ports"]))
-        # Per-source meters prevent a single source consuming everyone's allowance.
         for family, size in [("ip", 65535), ("ip6", 65535)]:
             lines.append(
                 f"  tcp dport {{ {ports} }} tcp flags & (syn | ack) == syn "
                 f"meter syn_{family} size {size} {{ {family} saddr timeout 60s "
-                f"limit rate over {p['syn_rate']}/second burst {p['syn_rate'] * 2} packets }} counter drop"
+                f"limit rate over {p['syn_rate']}/second burst {p['syn_rate'] * 2} packets }} drop"
             )
     lines += [" }", "}"]
     return "\n".join(lines) + "\n"
@@ -147,7 +150,7 @@ def apply_policy(policy, elevated=False):
 
 
 class FirewallController:
-    """Independent systemd rollback covers agent/process failure during application."""
+    """Apply HS-owned nftables state only when policy/stage actually changes."""
 
     def __init__(self, directory: Path):
         self.directory = directory
@@ -158,6 +161,7 @@ class FirewallController:
         self.rejected = None
         self.started = False
         self.timer_unit = "hs-firewall-rollback"
+        self.elevated = None
         try:
             saved = json.loads(self.state_file.read_text())
         except (OSError, ValueError):
@@ -167,9 +171,7 @@ class FirewallController:
 
     def persist(self):
         self.directory.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w", dir=self.directory, delete=False
-        ) as stream:
+        with tempfile.NamedTemporaryFile(mode="w", dir=self.directory, delete=False) as stream:
             os.chmod(stream.name, 0o600)
             json.dump(
                 {
@@ -182,90 +184,71 @@ class FirewallController:
             os.fsync(stream.fileno())
         os.replace(stream.name, self.state_file)
 
+    def _stop_rollback(self, include_service=False):
+        units = [self.timer_unit + ".timer"]
+        if include_service:
+            units.append(self.timer_unit + ".service")
+        subprocess.run(["systemctl", "stop", *units], capture_output=True, timeout=5)
+
     def tick(self, config, stage):
-        mode = (
-            config.get("mode", "observe") if config.get("enabled", True) else "observe"
-        )
+        mode = config.get("mode", "observe") if config.get("enabled", True) else "observe"
         policy = validate_policy(config.get("policy", {}))
-        revision = hashlib.sha256(
-            json.dumps(policy, sort_keys=True).encode()
-        ).hexdigest()
-        elevated = (
-            stage in ("attack", "elevated") if config.get("auto_stage", True) else True
-        )
+        revision = hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
+        elevated = stage in ("attack", "elevated") if config.get("auto_stage", True) else True
         armed = False
         try:
             if not self.started:
-                subprocess.run(
-                    [
-                        "systemctl",
-                        "stop",
-                        self.timer_unit + ".timer",
-                        self.timer_unit + ".service",
-                    ],
-                    capture_output=True,
-                    timeout=5,
-                )
+                self._stop_rollback(include_service=True)
                 remove_table()
                 self.started = True
-                if (
-                    mode == "enforce"
-                    and self.confirmed_revision == revision
-                    and self.rejected != revision
-                ):
+                if mode == "enforce" and self.confirmed_revision == revision and self.rejected != revision:
                     apply_policy(policy, elevated)
                     self.applied = revision
                     self.elevated = elevated
+
             if mode != "enforce":
                 if self.applied or self.pending:
-                    subprocess.run(
-                        ["systemctl", "stop", self.timer_unit + ".timer"],
-                        capture_output=True,
-                        timeout=5,
-                    )
+                    self._stop_rollback()
                     remove_table()
-                if self.confirmed_revision or self.rejected:
-                    self.confirmed_revision = self.rejected = None
-                    self.persist()
-                self.applied = self.pending = self.rejected = None
+                # Keep a confirmed revision while disabled. Re-enabling the exact same
+                # policy can then be immediate; editing the policy creates a new revision
+                # and still requires the 45-second safety confirmation.
+                self.applied = None
+                self.pending = None
                 self.error = None
+
             elif self.pending and time.time() >= self.pending["deadline"]:
                 remove_table()
                 self.rejected = self.pending["revision"]
                 self.persist()
-                self.applied = self.pending = None
+                self.applied = None
+                self.pending = None
                 self.error = "Policy rolled back: confirmation was not received within 45 seconds"
-            elif (
-                self.pending and config.get("confirmed_token") == self.pending["token"]
-            ):
-                subprocess.run(
-                    ["systemctl", "stop", self.pending["unit"] + ".timer"],
-                    check=True,
-                    timeout=5,
-                    capture_output=True,
-                )
+
+            elif self.pending and config.get("confirmed_token") == self.pending["token"]:
+                self._stop_rollback()
                 self.applied = self.pending["revision"]
                 self.confirmed_revision = self.applied
                 self.rejected = None
                 self.persist()
                 self.pending = None
                 self.error = None
+
             elif (
                 not self.pending
                 and self.applied != revision
+                and self.confirmed_revision == revision
                 and self.rejected != revision
             ):
-                # Syntax/capability check before arming rollback; invalid policies keep the current table.
+                apply_policy(policy, elevated)
+                self.applied = revision
+                self.error = None
+
+            elif not self.pending and self.applied != revision and self.rejected != revision:
                 preflight_policy(policy, elevated)
-                # Schedule rollback BEFORE a packet can be dropped.
-                unit = self.timer_unit
+                self._stop_rollback(include_service=True)
                 subprocess.run(
-                    ["systemctl", "stop", unit + ".timer", unit + ".service"],
-                    capture_output=True,
-                    timeout=5,
-                )
-                subprocess.run(
-                    ["systemctl", "reset-failed", unit + ".service"],
+                    ["systemctl", "reset-failed", self.timer_unit + ".service"],
                     capture_output=True,
                     timeout=5,
                 )
@@ -273,7 +256,7 @@ class FirewallController:
                 subprocess.run(
                     [
                         "systemd-run",
-                        "--unit=" + unit,
+                        "--unit=" + self.timer_unit,
                         "--on-active=45s",
                         shutil.which("nft") or "/usr/sbin/nft",
                         "delete",
@@ -291,24 +274,24 @@ class FirewallController:
                 self.pending = dict(
                     revision=revision,
                     deadline=deadline,
-                    unit=unit,
+                    unit=self.timer_unit,
                     token=secrets.token_hex(16),
                 )
                 self.applied = None
                 self.error = None
-            elif self.applied == revision:
-                # Refresh only if adaptive stage changes, preserving counters otherwise.
-                if getattr(self, "elevated", None) != elevated:
-                    apply_policy(policy, elevated)
+
+            elif self.applied == revision and self.elevated != elevated:
+                apply_policy(policy, elevated)
+
             self.elevated = elevated
         except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
             self.error = str(exc)
             if armed:
-                subprocess.run(
-                    ["systemctl", "stop", self.timer_unit + ".timer"],
-                    capture_output=True,
-                    timeout=5,
-                )
+                try:
+                    self._stop_rollback()
+                except (OSError, subprocess.SubprocessError):
+                    pass
+
         return dict(
             active=bool(self.applied or self.pending),
             policy=mode,
@@ -316,6 +299,7 @@ class FirewallController:
             fail_open=True,
             pending=self.pending,
             revision=self.applied,
+            confirmed_revision=self.confirmed_revision,
             error=self.error,
             scope="Host INPUT only; Docker forwarded traffic requires its own policy",
         )
