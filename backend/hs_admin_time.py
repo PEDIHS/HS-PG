@@ -272,6 +272,7 @@ async def _suspend_admin_locked(db: AsyncSession, admin: Admin, entry: dict) -> 
     username = admin.username
     snapshot = _load_snapshot(username)
     users = await _get_users(db, admin.id)
+    was_suspended = bool(entry.get("suspended"))
 
     if snapshot is None:
         snapshot = {
@@ -284,33 +285,43 @@ async def _suspend_admin_locked(db: AsyncSession, admin: Admin, entry: dict) -> 
 
     snap_users = snapshot.setdefault("users", {})
     changed_snapshot = False
+    users_to_remove: list[User] = []
     for user in users:
         key = str(user.id)
-        if key not in snap_users:
+        is_new = key not in snap_users
+        if is_new:
             snap_users[key] = _snapshot_user(user, now)
             changed_snapshot = True
+        # On the first expiry remove everyone. Later ticks only touch users that
+        # were newly created or manually reactivated while their admin is paused.
+        if not was_suspended or is_new or user.status != UserStatus.expired:
+            if user.status != UserStatus.expired:
+                user.status = UserStatus.expired
+                user.last_status_change = now
+            user.expire = now
+            users_to_remove.append(user)
 
     if changed_snapshot or not _snapshot_path(username).exists():
         # Persist original user clocks before changing any database state.
         _write_snapshot(username, snapshot)
 
+    db_changed = bool(users_to_remove)
     if admin.status != AdminStatus.disabled and admin.status != AdminStatus.limited:
         admin.status = AdminStatus.limited
         admin.last_status_change = now
+        db_changed = True
 
-    for user in users:
-        if user.status != UserStatus.expired:
-            user.status = UserStatus.expired
-            user.last_status_change = now
-        user.expire = now
-
-    await db.commit()
-    await remove_users(users)
+    if db_changed:
+        await db.commit()
+    if users_to_remove:
+        await remove_users(users_to_remove)
 
     entry = dict(entry)
     entry["suspended"] = True
-    entry.setdefault("suspended_at", now.isoformat())
-    entry.setdefault("notification_sent_at", None)
+    if not entry.get("suspended_at"):
+        entry["suspended_at"] = now.isoformat()
+    if "notification_sent_at" not in entry:
+        entry["notification_sent_at"] = None
     _set_entry(username, entry)
 
     if not entry.get("notification_sent_at") and await _send_expiry_notification(admin):
