@@ -34,10 +34,14 @@ else fail "curl or wget is required"; fi
 
 TMP="$(mktemp -d)"
 raw(){ printf 'https://raw.githubusercontent.com/%s/%s/%s?hs=%s' "$REPO" "$REF" "$1" "$(date +%s)"; }
-files=(backend/hs_plugin_runtime.py backend/hs_plugin_api.py plugin/patch_pasarguard.py plugin/integrate-dashboard.sh plugin/hs-plugin.js cli/hs-pg systemd/hs-pg-integrator.service systemd/hs-pg-integrator.timer systemd/hs-pg-integrator.path)
+files=(backend/hs_plugin_runtime.py backend/hs_plugin_api.py plugin/patch_pasarguard.py plugin/integrate-dashboard.sh plugin/hs-plugin.js plugin/hs-tab-fix.js cli/hs-pg systemd/hs-pg-integrator.service systemd/hs-pg-integrator.timer systemd/hs-pg-integrator.path)
 for file in "${files[@]}"; do mkdir -p "$TMP/$(dirname "$file")"; dl "$(raw "$file")" "$TMP/$file" || fail "failed to download $file"; done
 
 python3 -m py_compile "$TMP/backend/hs_plugin_runtime.py" "$TMP/backend/hs_plugin_api.py" "$TMP/plugin/patch_pasarguard.py" || fail "Python validation failed"
+if command -v node >/dev/null 2>&1; then
+  node --check "$TMP/plugin/hs-plugin.js" || fail "hs-plugin.js validation failed"
+  node --check "$TMP/plugin/hs-tab-fix.js" || fail "hs-tab-fix.js validation failed"
+fi
 bash -n "$TMP/plugin/integrate-dashboard.sh" "$TMP/cli/hs-pg" || fail "Shell validation failed"
 
 backup="$ROOT/backups/$(date +%Y%m%d-%H%M%S)"
@@ -48,6 +52,7 @@ install -m 0644 "$TMP/backend/hs_plugin_api.py" "$ROOT/backend/hs_plugin_api.py"
 install -m 0755 "$TMP/plugin/patch_pasarguard.py" "$ROOT/plugin/patch_pasarguard.py"
 install -m 0755 "$TMP/plugin/integrate-dashboard.sh" "$ROOT/plugin/integrate-dashboard.sh"
 install -m 0644 "$TMP/plugin/hs-plugin.js" "$ROOT/plugin/hs-plugin.js"
+install -m 0644 "$TMP/plugin/hs-tab-fix.js" "$ROOT/plugin/hs-tab-fix.js"
 install -m 0755 "$TMP/cli/hs-pg" "$ROOT/cli/hs-pg"
 install -m 0755 "$TMP/cli/hs-pg" /usr/local/bin/hs-pg
 
