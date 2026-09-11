@@ -19,6 +19,7 @@ jobs:
           python tests/test_runtime.py
           python tests/test_patcher.py
           python tests/test_backup_agent.py
+          python tests/test_admin_time.py
           node --check plugin/hs-plugin.js
           node --check plugin/hs-tab-fix.js
           node --check plugin/hs-node-pro.js
