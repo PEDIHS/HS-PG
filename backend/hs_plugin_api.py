@@ -39,7 +39,10 @@ class RatioBody(BaseModel):
 def _default_state() -> dict:
     return {
         "version": 2,
-        "features": {"host_usage_ratio": {"enabled": True}},
+        "features": {
+            "host_usage_ratio": {"enabled": True},
+            "node_pro": {"enabled": False},
+        },
         "inbound_offsets": {},
         "updated_at": None,
     }
@@ -53,7 +56,9 @@ def _load_state() -> dict:
     except (OSError, json.JSONDecodeError, TypeError):
         value = _default_state()
     value.setdefault("version", 1)
-    value.setdefault("features", {}).setdefault("host_usage_ratio", {"enabled": True})
+    features = value.setdefault("features", {})
+    features.setdefault("host_usage_ratio", {"enabled": True})
+    features.setdefault("node_pro", {"enabled": False})
     value.setdefault("inbound_offsets", {})
     return value
 
@@ -300,13 +305,18 @@ async def set_feature(
     body: ToggleBody,
     _owner: AdminDetails = Depends(_require_owner),
 ):
-    if feature_name != "host_usage_ratio":
+    if feature_name not in {"host_usage_ratio", "node_pro"}:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown HS Plugin feature")
     with _write_lock():
         state = _load_state()
         state.setdefault("features", {}).setdefault(feature_name, {})["enabled"] = body.enabled
         _save_state(state)
-    return {"ok": True, "feature": feature_name, "enabled": body.enabled, "requires_resync": True}
+    return {
+        "ok": True,
+        "feature": feature_name,
+        "enabled": body.enabled,
+        "requires_resync": feature_name == "host_usage_ratio",
+    }
 
 
 @router.put("/hosts/{host_id}/usage-ratio")
