@@ -38,6 +38,7 @@ files=(
   backend/hs_plugin_runtime.py
   backend/hs_plugin_api.py
   backend/hs_admin_time.py
+  backend/hs_admin_time_job.py
   backend/hs_backup_api.py
   backend/hs_backup_agent.py
   plugin/patch_pasarguard.py
@@ -64,6 +65,7 @@ python3 -m py_compile \
   "$TMP/backend/hs_plugin_runtime.py" \
   "$TMP/backend/hs_plugin_api.py" \
   "$TMP/backend/hs_admin_time.py" \
+  "$TMP/backend/hs_admin_time_job.py" \
   "$TMP/backend/hs_backup_api.py" \
   "$TMP/backend/hs_backup_agent.py" \
   "$TMP/plugin/patch_pasarguard.py" \
@@ -89,6 +91,7 @@ mkdir -p "$ROOT/backend" "$ROOT/plugin" "$ROOT/cli" "$ROOT/systemd" "$DATA"
 install -m 0644 "$TMP/backend/hs_plugin_runtime.py" "$ROOT/backend/hs_plugin_runtime.py"
 install -m 0644 "$TMP/backend/hs_plugin_api.py" "$ROOT/backend/hs_plugin_api.py"
 install -m 0644 "$TMP/backend/hs_admin_time.py" "$ROOT/backend/hs_admin_time.py"
+install -m 0644 "$TMP/backend/hs_admin_time_job.py" "$ROOT/backend/hs_admin_time_job.py"
 install -m 0644 "$TMP/backend/hs_backup_api.py" "$ROOT/backend/hs_backup_api.py"
 install -m 0755 "$TMP/backend/hs_backup_agent.py" "$ROOT/backend/hs_backup_agent.py"
 install -m 0755 "$TMP/plugin/patch_pasarguard.py" "$ROOT/plugin/patch_pasarguard.py"
