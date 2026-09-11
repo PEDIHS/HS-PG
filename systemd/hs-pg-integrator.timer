@@ -1,11 +1,11 @@
 [Unit]
-Description=Periodic low-overhead HS Plugin/PasarGuard integration check
+Description=Periodic HS Plugin/PasarGuard integration safety check
 
 [Timer]
 OnBootSec=45s
-OnUnitInactiveSec=5min
-RandomizedDelaySec=20s
-AccuracySec=10s
+OnUnitInactiveSec=30min
+RandomizedDelaySec=2min
+AccuracySec=30s
 Unit=hs-pg-integrator.service
 Persistent=true
 
