@@ -152,9 +152,9 @@
     if(!root){
       if(rootObserver){rootObserver.disconnect();rootObserver=null;}
       observedRoot=null;
-      return;
+      return false;
     }
-    if(observedRoot===root&&rootObserver)return;
+    if(observedRoot===root&&rootObserver)return true;
     if(rootObserver)rootObserver.disconnect();
     observedRoot=root;
     rootObserver=new MutationObserver(mutations=>{
@@ -162,16 +162,22 @@
     });
     rootObserver.observe(root,{childList:true});
     scheduleMount();
+    return true;
+  }
+
+  function attachAfterActivation(attempt=0){
+    if(watchRoot()){
+      scheduleMount();
+      return;
+    }
+    if(attempt<12)setTimeout(()=>attachAfterActivation(attempt+1),25);
   }
 
   function tick(){style();watchRoot();push();draw();controls();}
   function boot(){
     tick();
     timer=setInterval(()=>{if(!document.hidden)tick();},5000);
-    window.addEventListener('hs-shield:activate',()=>{
-      setTimeout(()=>{watchRoot();scheduleMount();},0);
-      setTimeout(()=>{watchRoot();scheduleMount();},100);
-    });
+    window.addEventListener('hs-shield:activate',()=>attachAfterActivation());
     window.addEventListener('beforeunload',()=>{
       clearInterval(timer);
       rootObserver?.disconnect();
