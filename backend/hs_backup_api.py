@@ -5,13 +5,14 @@ import fcntl
 import http.client
 import json
 import os
+import re
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -29,8 +30,11 @@ OUTBOX_DIR = DATA_DIR / "backup-outbox"
 JOBS_DIR = DATA_DIR / "backup-jobs"
 AGENT_HOST = os.getenv("HS_BACKUP_AGENT_HOST", "127.0.0.1")
 AGENT_PORT = int(os.getenv("HS_BACKUP_AGENT_PORT", "8791"))
-MAX_UPLOAD_BYTES = int(os.getenv("HS_BACKUP_MAX_UPLOAD_BYTES", str(1024 * 1024 * 1024)))
+MAX_UPLOAD_BYTES = int(os.getenv("HS_BACKUP_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024 * 1024)))
+UPLOAD_MANIFEST = "upload-manifest.json"
 _ID_CHARS = frozenset("0123456789abcdef")
+PART_RE = re.compile(r"^.+\.part\d{2}\.zip$", re.IGNORECASE)
+ZIP_SPLIT_RE = re.compile(r"^.+\.z\d{2}$", re.IGNORECASE)
 
 
 class ToggleBody(BaseModel):
@@ -169,6 +173,47 @@ def _raise_agent(status_code: int, data: dict) -> None:
     raise HTTPException(status_code=mapped, detail=detail)
 
 
+def _safe_upload_name(value: str) -> str:
+    name = Path(unquote(value or "")).name
+    if not name or name in {".", ".."}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Backup filename is invalid")
+    lowered = name.lower()
+    if not (lowered.endswith(".zip") or PART_RE.match(name) or ZIP_SPLIT_RE.match(name)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only PasarGuard ZIP, .partNN.zip, or .zNN backup files can be imported",
+        )
+    return name
+
+
+def _write_upload_manifest(upload_dir: Path, files: list[dict]) -> None:
+    target = upload_dir / UPLOAD_MANIFEST
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"version": 1, "files": files}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, target)
+
+
+async def _save_streamed_file(upload_dir: Path, index: int, name: str, reader, current_total: int) -> tuple[dict, int]:
+    stored = f"part-{index:04d}.bin"
+    target = upload_dir / stored
+    size = 0
+    with target.open("wb") as dest:
+        while True:
+            chunk = await reader(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            current_total += len(chunk)
+            if current_total > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Backup upload is too large")
+            dest.write(chunk)
+    if size <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Backup file is empty: {name}")
+    os.chmod(target, 0o600)
+    return {"name": name, "stored": stored, "size": size}, current_total
+
+
 @router.get("/feature")
 async def get_feature(_owner: AdminDetails = Depends(_require_owner)):
     state = _load_state()
@@ -260,16 +305,13 @@ async def import_backup(
     x_hs_backup_filename: str | None = Header(default=None, alias="X-HS-Backup-Filename"),
     _owner: AdminDetails = Depends(_require_owner),
 ):
+    """Stream one normal ZIP or a complete native split-backup set to the host.
+
+    Multipart requests use repeated `files` fields. The legacy raw-body format
+    remains accepted so upgrades do not break an already-open older dashboard.
+    """
     _require_feature()
-
-    raw_name = unquote(x_hs_backup_filename or "backup.zip")
-    filename = Path(raw_name).name
-    if not filename.lower().endswith(".zip"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Only ZIP backup files can be imported",
-        )
-
+    content_type = request.headers.get("content-type", "").lower()
     content_length = request.headers.get("content-length")
     if content_length:
         try:
@@ -277,52 +319,78 @@ async def import_backup(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Content-Length") from exc
         if declared <= 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Backup file is empty")
-        if declared > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Backup file is too large")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Backup upload is empty")
+        if declared > MAX_UPLOAD_BYTES + 4 * 1024 * 1024:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Backup upload is too large")
 
     upload_id = uuid.uuid4().hex
     upload_dir = INBOX_DIR / upload_id
     upload_dir.mkdir(parents=True, exist_ok=False)
     os.chmod(upload_dir, 0o700)
-    upload_path = upload_dir / "upload.zip"
-    written = 0
+    saved: list[dict] = []
+    total = 0
+    uploads: list[UploadFile] = []
 
     try:
-        with upload_path.open("wb") as dest:
-            async for chunk in request.stream():
-                if not chunk:
-                    continue
-                written += len(chunk)
-                if written > MAX_UPLOAD_BYTES:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail="Backup file is too large",
-                    )
-                dest.write(chunk)
-        if written == 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Backup file is empty")
-        os.chmod(upload_path, 0o600)
+        if content_type.startswith("multipart/form-data"):
+            form = await request.form()
+            candidates = form.getlist("files")
+            uploads = [item for item in candidates if isinstance(item, UploadFile)]
+            if not uploads:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No backup files were uploaded")
+            if len(uploads) > 256:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Too many backup parts")
 
+            seen: set[str] = set()
+            for index, upload in enumerate(uploads):
+                name = _safe_upload_name(upload.filename or "")
+                key = name.lower()
+                if key in seen:
+                    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Duplicate backup part: {name}")
+                seen.add(key)
+                entry, total = await _save_streamed_file(upload_dir, index, name, upload.read, total)
+                saved.append(entry)
+        else:
+            name = _safe_upload_name(x_hs_backup_filename or "backup.zip")
+            stored = upload_dir / "part-0000.bin"
+            size = 0
+            with stored.open("wb") as dest:
+                async for chunk in request.stream():
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    total += len(chunk)
+                    if total > MAX_UPLOAD_BYTES:
+                        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Backup upload is too large")
+                    dest.write(chunk)
+            if size <= 0:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Backup file is empty")
+            os.chmod(stored, 0o600)
+            saved.append({"name": name, "stored": stored.name, "size": size})
+
+        _write_upload_manifest(upload_dir, saved)
         code, data = _agent_request("POST", "/import", {"upload_id": upload_id}, timeout=10)
         _raise_agent(code, data)
         return {
             "job_id": data.get("job_id"),
             "status": data.get("status", "queued"),
-            "filename": filename,
-            "size": written,
+            "files": [{"name": item["name"], "size": item["size"]} for item in saved],
+            "size": total,
         }
     except Exception:
-        if upload_path.exists():
-            try:
-                upload_path.unlink()
-            except OSError:
-                pass
+        shutil_target = upload_dir
         try:
-            upload_dir.rmdir()
-        except OSError:
+            import shutil
+            shutil.rmtree(shutil_target, ignore_errors=True)
+        except Exception:
             pass
         raise
+    finally:
+        for upload in uploads:
+            try:
+                await upload.close()
+            except Exception:
+                pass
 
 
 @router.get("/jobs/{job_id}")
