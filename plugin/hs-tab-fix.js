@@ -4,7 +4,7 @@
   const ROOT_ID = 'hs-plugin-root';
   const NAV_ID = 'hs-plugin-nav';
   const QUERY_KEY = 'hs_plugin';
-  const VERSION = '0.3.1';
+  const VERSION = '0.3.2';
   const rawFetch = window.fetch.bind(window);
 
   let opening = false;
@@ -291,6 +291,20 @@
     }
   }
 
+  function refreshAdminTimeControl() {
+    const started = Date.now();
+    const attempt = () => {
+      if (!document.getElementById(ROOT_ID)) return;
+      const adminTime = window.HSAdminTime;
+      if (adminTime?.refresh) {
+        Promise.resolve(adminTime.refresh()).catch(error => console.error('[HS Plugin] Admin Time refresh failed', error));
+        return;
+      }
+      if (Date.now() - started < 4000) window.setTimeout(attempt, 100);
+    };
+    window.setTimeout(attempt, 0);
+  }
+
   async function openNow() {
     if (opening) return true;
     opening = true;
@@ -298,7 +312,10 @@
       const outlet = findOutlet();
       if (!outlet) return false;
       const root = renderShell(outlet);
-      hydrate(root).catch(error => console.error('[HS Plugin] hydrate failed', error));
+      refreshAdminTimeControl();
+      hydrate(root)
+        .catch(error => console.error('[HS Plugin] hydrate failed', error))
+        .finally(() => refreshAdminTimeControl());
       return true;
     } finally {
       opening = false;
