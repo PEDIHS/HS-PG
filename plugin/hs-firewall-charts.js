@@ -9,7 +9,6 @@
   let observedRoot=null;
   let rootObserver=null;
   let mountQueued=false;
-  let lastMessage='';
 
   function authHeaders(){
     const headers=new Headers({'Content-Type':'application/json'});
@@ -46,9 +45,7 @@
       #${CONTROL_ID} .hs-switch[aria-checked="true"]{background:linear-gradient(90deg,#8f650f,#d9b34c)}
       #${CONTROL_ID} .hs-switch[aria-checked="true"]:after{transform:translateX(15px)}
       #${CONTROL_ID} .hs-switch:disabled{opacity:.55;cursor:wait}
-      #${CONTROL_ID} .hs-power-result{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;font-size:.6rem;color:hsl(var(--muted-foreground));min-height:1rem;margin-top:.45rem}
-      #${CONTROL_ID} .hs-power-result.hs-error{color:#ef4444}
-      #${CONTROL_ID} .hs-confirm{border:1px solid rgba(217,179,76,.45);background:rgba(217,179,76,.10);color:#d9b34c;border-radius:8px;padding:.3rem .5rem;font:inherit;font-weight:700;cursor:pointer}
+      #${CONTROL_ID} .hs-power-result{font-size:.6rem;color:hsl(var(--muted-foreground));min-height:.8rem;margin-top:.4rem}
       @media(max-width:1100px){#${CONTROL_ID} .hs-power-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
       @media(max-width:640px){#${CONTROL_ID} .hs-power-grid{grid-template-columns:1fr}}
     `;document.head.appendChild(s);
@@ -86,62 +83,19 @@
     });
   }
 
-  function mergeConfig(config){
-    const state=window.HSShieldDebug?.getState?.();
-    if(state&&config)state.config={...(state.config||{}),...config};
-  }
-
-  async function refreshSoon(delay=0){
-    if(delay)await new Promise(resolve=>setTimeout(resolve,delay));
-    try{await window.HSShieldDebug?.refresh?.();}catch(_error){}
-    scheduleMount();
-  }
-
-  async function setConfig(key,value){
+  async function setConfig(key,value,result){
     if(saving)return;
     saving=true;
     document.querySelectorAll(`#${CONTROL_ID} .hs-switch`).forEach(button=>button.disabled=true);
-    lastMessage='Applying…';
-    scheduleMount();
+    result.textContent='Applying…';
     try{
-      let payload;
-      if(key==='firewall')payload=value?{enabled:true,mode:'enforce'}:{enabled:false,mode:'observe'};
-      else payload={[key]:value};
-      const response=await fetch('/api/hs-shield/config',{method:'PUT',credentials:'same-origin',headers:authHeaders(),body:JSON.stringify(payload)});
+      const response=await fetch('/api/hs-shield/config',{method:'PUT',credentials:'same-origin',headers:authHeaders(),body:JSON.stringify({[key]:value})});
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error(data.detail||`HTTP ${response.status}`);
-      mergeConfig(data.config);
-      if(key==='firewall'&&value){
-        lastMessage='Firewall activation requested. If this policy is new, confirm it below within 45 seconds.';
-        refreshSoon(3200);
-      }else if(key==='firewall'){
-        lastMessage='Firewall OFF requested. HS nftables rules are being removed.';
-        refreshSoon(1200);
-      }else{
-        lastMessage='Saved.';
-        refreshSoon(500);
-      }
+      result.textContent=key==='enabled'&&!value?'Firewall disabled; HS nftables rules will be removed.':'Saved.';
+      await window.HSShieldDebug?.refresh?.();
     }catch(error){
-      lastMessage=error.message||'Unable to update control.';
-    }finally{
-      saving=false;
-      scheduleMount();
-    }
-  }
-
-  async function confirmFirewall(token){
-    if(saving||!token)return;
-    saving=true;
-    lastMessage='Confirming firewall…';
-    scheduleMount();
-    try{
-      const response=await fetch('/api/hs-shield/confirm',{method:'POST',credentials:'same-origin',headers:authHeaders(),body:JSON.stringify({token})});
-      const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error(data.detail||`HTTP ${response.status}`);
-      lastMessage='Firewall confirmed. Waiting for the host agent to report active state.';
-      await refreshSoon(1200);
-    }catch(error){
-      lastMessage=error.message||'Unable to confirm firewall.';
+      result.textContent=error.message||'Unable to update control.';
     }finally{
       saving=false;
       scheduleMount();
@@ -151,9 +105,7 @@
   function controls(){
     const root=document.getElementById('hs-shield-root');if(!root)return;
     const wrap=root.querySelector('.hs-wrap');if(!wrap)return;
-    const state=window.HSShieldDebug?.getState?.()||{};
-    const config=state.config||{};
-    const enforcement=state.status?.enforcement||{};
+    const config=window.HSShieldDebug?.getState?.()?.config||{};
     let panel=document.getElementById(CONTROL_ID);
     if(panel&&!root.contains(panel))panel.remove();
     panel=document.getElementById(CONTROL_ID);
@@ -163,22 +115,19 @@
       const anchor=wrap.querySelector('.hs-hero')||wrap.querySelector('.hs-section')||wrap.children[2]||null;
       if(anchor)wrap.insertBefore(panel,anchor);else wrap.appendChild(panel);
     }
-    const firewallOn=config.enabled!==false&&config.mode==='enforce';
     const entries=[
-      ['firewall','Firewall','Real HS nftables enforcement',firewallOn],
-      ['telemetry_enabled','Live Monitor','Optional traffic telemetry',config.telemetry_enabled===true],
-      ['low_cpu_mode','Low CPU','30s samples • no ss subprocess',config.low_cpu_mode!==false],
+      ['enabled','Firewall','HS nftables enforcement',config.enabled!==false],
+      ['telemetry_enabled','Live Monitor','Traffic & connection telemetry',config.telemetry_enabled!==false],
+      ['low_cpu_mode','Low CPU','12s sampling + cached health',config.low_cpu_mode!==false],
       ['integration_guard_enabled','Auto Repair','Re-apply HS after panel updates',config.integration_guard_enabled!==false]
     ];
     if(!panel.dataset.ready){
-      panel.innerHTML=`<div class="hs-power-head"><div class="hs-power-title"><i></i>Shield controls</div><div class="hs-power-note">Independent real controls</div></div><div class="hs-power-grid">${entries.map(([key,name,desc])=>`<div class="hs-power-item"><div class="hs-power-copy"><div class="hs-power-name">${name}</div><div class="hs-power-desc">${desc}</div></div><button type="button" class="hs-switch" role="switch" aria-label="${name}" aria-checked="false" data-hs-power="${key}"></button></div>`).join('')}</div><div class="hs-power-result" role="status"></div>`;
+      panel.innerHTML=`<div class="hs-power-head"><div class="hs-power-title"><i></i>Shield controls</div><div class="hs-power-note">Independent controls • no PasarGuard restart</div></div><div class="hs-power-grid">${entries.map(([key,name,desc])=>`<div class="hs-power-item"><div class="hs-power-copy"><div class="hs-power-name">${name}</div><div class="hs-power-desc">${desc}</div></div><button type="button" class="hs-switch" role="switch" aria-label="${name}" aria-checked="false" data-hs-power="${key}"></button></div>`).join('')}</div><div class="hs-power-result" role="status"></div>`;
       panel.dataset.ready='1';
       panel.addEventListener('click',event=>{
-        const confirm=event.target instanceof Element?event.target.closest('[data-hs-confirm]'):null;
-        if(confirm){event.preventDefault();confirmFirewall(confirm.dataset.hsConfirm);return;}
         const button=event.target instanceof Element?event.target.closest('[data-hs-power]'):null;
         if(!button||saving)return;
-        setConfig(button.dataset.hsPower,button.getAttribute('aria-checked')!=='true');
+        setConfig(button.dataset.hsPower,button.getAttribute('aria-checked')!=='true',panel.querySelector('.hs-power-result'));
       });
     }
     const stateByKey=Object.fromEntries(entries.map(([key,,,on])=>[key,on]));
@@ -186,20 +135,6 @@
       button.setAttribute('aria-checked',stateByKey[button.dataset.hsPower]?'true':'false');
       button.disabled=saving;
     });
-    const result=panel.querySelector('.hs-power-result');
-    if(result){
-      result.classList.toggle('hs-error',!!enforcement.error);
-      if(enforcement.pending?.token){
-        const deadline=enforcement.pending.deadline?new Date(enforcement.pending.deadline*1000).toLocaleTimeString():'';
-        result.innerHTML=`<span>Firewall policy is active temporarily. Confirm before ${deadline||'rollback'}.</span><button type="button" class="hs-confirm" data-hs-confirm="${String(enforcement.pending.token)}">Keep Firewall ON</button>`;
-      }else if(enforcement.error){
-        result.textContent=`Firewall error: ${enforcement.error}`;
-      }else if(enforcement.active&&firewallOn){
-        result.textContent='Firewall is active.';
-      }else{
-        result.textContent=lastMessage;
-      }
-    }
   }
 
   function scheduleMount(){

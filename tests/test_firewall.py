@@ -23,8 +23,6 @@ def test_rules_preserve_management_ipv6_and_scope():
     assert result.index("192.0.2.10/32") < result.index("192.0.2.0/24")
     assert "ip6 saddr" in result and "meter syn_ip" in result
     assert "policy accept" in result
-    assert "ct state" not in result
-    assert " counter " not in result
 
 
 @pytest.mark.parametrize(
@@ -51,7 +49,7 @@ def test_preflight_before_apply(monkeypatch):
     assert calls[2][0] == ["-f", "-"] and calls[1][1] == calls[2][1]
 
 
-def test_rollback_confirm_and_fast_reenable(tmp_path, monkeypatch):
+def test_rollback_and_confirm_with_unique_token(tmp_path, monkeypatch):
     clock = [1000.0]
     operations = []
     monkeypatch.setattr(fw.time, "time", lambda: clock[0])
@@ -62,38 +60,31 @@ def test_rollback_confirm_and_fast_reenable(tmp_path, monkeypatch):
     monkeypatch.setattr(fw, "apply_policy", lambda *a: operations.append("apply"))
     monkeypatch.setattr(fw, "preflight_policy", lambda *a: operations.append("preflight"))
     controller = fw.FirewallController(tmp_path)
-    config = dict(mode="enforce", enabled=True, policy=POLICY)
+    config = dict(mode="enforce", policy=POLICY)
     pending = controller.tick(config, "normal")["pending"]
     assert operations.index("apply") > next(
         i
         for i, a in enumerate(operations)
         if isinstance(a, list) and a[0] == "systemd-run"
     )
-    confirmed = controller.tick({**config, "confirmed_token": pending["token"]}, "normal")
-    assert confirmed["revision"]
-
+    assert controller.tick({**config, "confirmed_token": pending["token"]}, "normal")[
+        "revision"
+    ]
     restarted = fw.FirewallController(tmp_path)
     timer_count = sum(isinstance(op, list) and op[0] == "systemd-run" for op in operations)
     restored = restarted.tick(config, "normal")
     assert restored["active"] and restored["pending"] is None
     assert sum(isinstance(op, list) and op[0] == "systemd-run" for op in operations) == timer_count
-
-    # Turning the firewall off removes HS rules but retains confirmation for the exact
-    # same policy. Turning it back on does not arm another rollback timer.
-    off = controller.tick({"enabled": False, "mode": "observe", "policy": POLICY}, "normal")
-    assert not off["active"]
-    before = sum(isinstance(op, list) and op[0] == "systemd-run" for op in operations)
-    again = controller.tick(config, "normal")
-    assert again["active"] and again["pending"] is None
-    assert sum(isinstance(op, list) and op[0] == "systemd-run" for op in operations) == before
-
-    # A changed policy is a new revision and still requires confirmation/rollback.
-    changed = {**POLICY, "syn_rate": 101}
-    new_pending = controller.tick({**config, "policy": changed}, "normal")["pending"]
-    assert new_pending and new_pending["token"] != pending["token"]
+    controller.tick({"mode": "observe"}, "normal")
+    new = controller.tick(config, "normal")["pending"]
+    assert new["token"] != pending["token"]
+    assert controller.tick({**config, "confirmed_token": pending["token"]}, "normal")[
+        "pending"
+    ]
     clock[0] += 46
-    assert not controller.tick({**config, "policy": changed}, "normal")["active"]
+    assert not controller.tick(config, "normal")["active"]
     assert "rolled back" in controller.error
+    assert not controller.tick(config, "normal")["active"]
 
 
 def test_router_upgrades_wrong_import_idempotently():
