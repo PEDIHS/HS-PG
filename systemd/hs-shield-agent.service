@@ -1,5 +1,5 @@
 [Unit]
-Description=HS Shield firewall and security telemetry agent
+Description=HS Shield firewall and low-overhead security telemetry agent
 After=network-online.target docker.service
 Wants=network-online.target
 ConditionPathExists=/opt/hs-pg/backend/hs_shield_agent.py
@@ -14,6 +14,10 @@ ExecStart=/usr/bin/python3 /opt/hs-pg/backend/hs_shield_agent.py
 ExecStopPost=-/usr/sbin/nft delete table inet hs_plugin
 Restart=on-failure
 RestartSec=2
+Nice=10
+CPUWeight=20
+CPUQuota=25%
+IOSchedulingClass=idle
 PrivateTmp=true
 NoNewPrivileges=true
 ProtectHome=true
