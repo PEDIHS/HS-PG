@@ -6,6 +6,9 @@
   const history={pps:[],mbps:[],syn_recv:[],established:[]};
   let timer=null;
   let saving=false;
+  let observedRoot=null;
+  let rootObserver=null;
+  let mountQueued=false;
 
   function authHeaders(){
     const headers=new Headers({'Content-Type':'application/json'});
@@ -27,7 +30,7 @@
       #hs-shield-root .hs-card:nth-child(2) .hs-mini-chart{color:#38bdf8}
       #hs-shield-root .hs-card:nth-child(3) .hs-mini-chart{color:#f59e0b}
       #hs-shield-root .hs-card:nth-child(4) .hs-mini-chart{color:#22c55e}
-      #${CONTROL_ID}{border:1px solid hsl(var(--border));border-radius:14px;background:hsl(var(--card));padding:.72rem .8rem}
+      #${CONTROL_ID}{border:1px solid hsl(var(--border));border-radius:14px;background:hsl(var(--card));padding:.72rem .8rem;min-height:96px}
       #${CONTROL_ID} .hs-power-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:.55rem}
       #${CONTROL_ID} .hs-power-title{font-size:.75rem;font-weight:750;display:flex;align-items:center;gap:.45rem}
       #${CONTROL_ID} .hs-power-title i{width:7px;height:7px;border-radius:99px;background:#d9b34c;box-shadow:0 0 8px rgba(217,179,76,.45)}
@@ -95,7 +98,7 @@
       result.textContent=error.message||'Unable to update control.';
     }finally{
       saving=false;
-      controls();
+      scheduleMount();
     }
   }
 
@@ -104,6 +107,8 @@
     const wrap=root.querySelector('.hs-wrap');if(!wrap)return;
     const config=window.HSShieldDebug?.getState?.()?.config||{};
     let panel=document.getElementById(CONTROL_ID);
+    if(panel&&!root.contains(panel))panel.remove();
+    panel=document.getElementById(CONTROL_ID);
     if(!panel){
       panel=document.createElement('section');
       panel.id=CONTROL_ID;
@@ -132,12 +137,64 @@
     });
   }
 
-  function tick(){style();push();draw();controls();}
+  function scheduleMount(){
+    if(mountQueued)return;
+    mountQueued=true;
+    queueMicrotask(()=>{
+      mountQueued=false;
+      controls();
+      draw();
+    });
+  }
+
+  function watchRoot(){
+    const root=document.getElementById('hs-shield-root');
+    if(!root){
+      if(rootObserver){rootObserver.disconnect();rootObserver=null;}
+      observedRoot=null;
+      return false;
+    }
+    if(observedRoot===root&&rootObserver)return true;
+    if(rootObserver)rootObserver.disconnect();
+    observedRoot=root;
+    rootObserver=new MutationObserver(mutations=>{
+      if(mutations.some(mutation=>mutation.type==='childList'))scheduleMount();
+    });
+    rootObserver.observe(root,{childList:true});
+    scheduleMount();
+    return true;
+  }
+
+  function attachAfterActivation(attempt=0){
+    if(watchRoot()){
+      scheduleMount();
+      return;
+    }
+    if(attempt<12)setTimeout(()=>attachAfterActivation(attempt+1),25);
+  }
+
+  function hookShieldOpen(){
+    const api=window.HSShieldDebug;
+    if(!api||api.__hsChartsOpenHooked)return;
+    const originalOpen=api.open.bind(api);
+    api.open=async(...args)=>{
+      const result=await originalOpen(...args);
+      attachAfterActivation();
+      return result;
+    };
+    Object.defineProperty(api,'__hsChartsOpenHooked',{value:true,configurable:true});
+  }
+
+  function tick(){style();hookShieldOpen();watchRoot();push();draw();controls();}
   function boot(){
+    hookShieldOpen();
     tick();
     timer=setInterval(()=>{if(!document.hidden)tick();},5000);
-    window.addEventListener('hs-shield:activate',()=>setTimeout(tick,80));
-    window.addEventListener('beforeunload',()=>clearInterval(timer),{once:true});
+    window.addEventListener('hs-shield:activate',()=>attachAfterActivation());
+    window.addEventListener('beforeunload',()=>{
+      clearInterval(timer);
+      rootObserver?.disconnect();
+    },{once:true});
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
