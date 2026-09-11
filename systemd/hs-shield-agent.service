@@ -1,0 +1,26 @@
+[Unit]
+Description=HS Shield observe-first security telemetry agent
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionPathExists=/opt/hs-pg/backend/hs_shield_agent.py
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/hs-pg/backend/hs_shield_agent.py
+Restart=on-failure
+RestartSec=2
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/pasarguard/hs-plugin/shield
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
