@@ -78,15 +78,26 @@ def patch_subscription(text: str) -> str:
             "from app.core.hosts import host_manager\n" + import_line,
             "subscription fair-use import",
         )
-    desired = (
-        "    hosts = await filter_hosts(list((await host_manager.get_hosts()).values()), user.status)\n"
-        "    # hs-fair-use: a Fair-limited user receives only Fair Use eligible Hosts.\n"
-        "    hosts = filter_subscription_hosts(hosts, user)\n"
-    )
-    if desired in text:
+    marker = "# hs-fair-use: a Fair-limited user receives only Fair Use eligible Hosts."
+    if marker in text:
         return text
-    old = "    hosts = await filter_hosts(list((await host_manager.get_hosts()).values()), user.status)\n"
-    return _replace_once(text, old, desired, "subscription host filter")
+    pattern = re.compile(
+        r"(?m)^(?P<indent>[ \t]*)hosts = await filter_hosts\(list\(\(await host_manager\.get_hosts\(\)\)\.values\(\)\), user\.status\)\s*$"
+    )
+    match = pattern.search(text)
+    if not match:
+        raise RuntimeError("subscription host filter anchor not found")
+    indent = match.group("indent")
+    replacement = (
+        match.group(0).rstrip()
+        + "\n"
+        + indent
+        + marker
+        + "\n"
+        + indent
+        + "hosts = filter_subscription_hosts(hosts, user)"
+    )
+    return text[: match.start()] + replacement + text[match.end() :]
 
 
 def patch_usage_job(text: str) -> str:
@@ -98,26 +109,28 @@ def patch_usage_job(text: str) -> str:
             "from app.operation.admin_sync import enforce_admin_limits_now\n" + import_line,
             "fair reconcile import",
         )
-    desired = (
-        "        # hs-fair-use: refresh derived status, Xray marks and node rate plans after charged usage changes.\n"
-        "        try:\n"
-        "            await reconcile_fair_use(logger=logger)\n"
-        "        except Exception:\n"
-        "            logger.exception(\"HS Fair Use reconcile failed after usage recording\")\n\n"
-        "        job_duration = time.time() - job_start_time\n"
-    )
-    if desired in text:
+    marker = "# hs-fair-use: refresh derived status, Xray marks and node rate plans after charged usage changes."
+    if marker in text:
         return text
-    old = "        job_duration = time.time() - job_start_time\n"
-    # There are two job_duration anchors in this module. Insert only inside user usage.
     user_pos = text.find("async def _record_user_usages_impl():")
     node_pos = text.find("async def _record_node_usages_impl():")
-    if user_pos < 0 or node_pos < 0:
+    if user_pos < 0 or node_pos < 0 or node_pos <= user_pos:
         raise RuntimeError("record usage function anchors not found")
     segment = text[user_pos:node_pos]
-    if segment.count(old) < 1:
+    matches = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)job_duration = time\.time\(\) - job_start_time\s*$", segment))
+    if not matches:
         raise RuntimeError("user usage completion anchor not found")
-    segment = segment.replace(old, desired, 1)
+    match = matches[-1]
+    indent = match.group("indent")
+    replacement = (
+        indent + marker + "\n"
+        + indent + "try:\n"
+        + indent + "    await reconcile_fair_use(logger=logger)\n"
+        + indent + "except Exception:\n"
+        + indent + '    logger.exception("HS Fair Use reconcile failed after usage recording")\n\n'
+        + match.group(0).rstrip()
+    )
+    segment = segment[: match.start()] + replacement + segment[match.end() :]
     return text[:user_pos] + segment + text[node_pos:]
 
 
