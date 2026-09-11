@@ -46,6 +46,7 @@ files=(
   plugin/hs-tab-fix.js
   plugin/hs-node-pro.js
   plugin/hs-backup.js
+  plugin/hs-backup-tab-watchdog.js
   cli/hs-pg
   systemd/hs-pg-integrator.service
   systemd/hs-pg-integrator.timer
@@ -71,6 +72,7 @@ if command -v node >/dev/null 2>&1; then
   node --check "$TMP/plugin/hs-tab-fix.js" || fail "hs-tab-fix.js validation failed"
   node --check "$TMP/plugin/hs-node-pro.js" || fail "hs-node-pro.js validation failed"
   node --check "$TMP/plugin/hs-backup.js" || fail "hs-backup.js validation failed"
+  node --check "$TMP/plugin/hs-backup-tab-watchdog.js" || fail "hs-backup-tab-watchdog.js validation failed"
 fi
 bash -n "$TMP/plugin/integrate-dashboard.sh" "$TMP/cli/hs-pg" || fail "Shell validation failed"
 
@@ -91,6 +93,7 @@ install -m 0644 "$TMP/plugin/hs-plugin.js" "$ROOT/plugin/hs-plugin.js"
 install -m 0644 "$TMP/plugin/hs-tab-fix.js" "$ROOT/plugin/hs-tab-fix.js"
 install -m 0644 "$TMP/plugin/hs-node-pro.js" "$ROOT/plugin/hs-node-pro.js"
 install -m 0644 "$TMP/plugin/hs-backup.js" "$ROOT/plugin/hs-backup.js"
+install -m 0644 "$TMP/plugin/hs-backup-tab-watchdog.js" "$ROOT/plugin/hs-backup-tab-watchdog.js"
 rm -f "$ROOT/plugin/hs-node-ip-fix.js"
 install -m 0755 "$TMP/cli/hs-pg" "$ROOT/cli/hs-pg"
 install -m 0755 "$TMP/cli/hs-pg" /usr/local/bin/hs-pg
