@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.7.1';
+  const VERSION = '0.7.2';
   const STYLE_ID = 'hs-node-pro-style';
   const BLOCK_CLASS = 'hs-node-pro';
   const CARD_CLASS = 'hs-node-pro-card';
@@ -28,32 +28,14 @@
       isolation:isolate;
       min-width:0!important;
       overflow:hidden!important;
-      border:1px solid rgba(220,176,74,.76)!important;
-      box-shadow:
-        0 8px 24px rgba(0,0,0,.10),
-        0 0 10px rgba(220,176,74,.07),
-        inset 0 1px rgba(255,233,174,.12)!important;
-      transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease!important;
+      border-color:var(--border)!important;
+      box-shadow:none!important;
+      transition:border-color .2s ease,background-color .2s ease!important;
     }
-    .${CARD_CLASS}::before{
-      content:'';
-      position:absolute;
-      z-index:3;
-      top:0;
-      left:12px;
-      right:12px;
-      height:1px;
-      pointer-events:none;
-      opacity:.95;
-      background:linear-gradient(90deg,transparent,rgba(255,222,139,.58),rgba(255,239,192,.95),rgba(255,222,139,.58),transparent);
-      filter:drop-shadow(0 0 3px rgba(232,188,83,.38));
-    }
+    .${CARD_CLASS}::before{display:none!important}
     .${CARD_CLASS}:hover{
-      border-color:rgba(240,198,97,.95)!important;
-      box-shadow:
-        0 10px 28px rgba(0,0,0,.13),
-        0 0 14px rgba(223,177,69,.12),
-        inset 0 1px rgba(255,236,184,.16)!important;
+      border-color:var(--border)!important;
+      box-shadow:none!important;
     }
 
     .${BLOCK_CLASS}{
