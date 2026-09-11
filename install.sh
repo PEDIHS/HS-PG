@@ -41,20 +41,27 @@ files=(
   backend/hs_admin_time_job.py
   backend/hs_backup_api.py
   backend/hs_backup_agent.py
+  backend/hs_shield_api.py
+  backend/hs_shield_agent.py
   plugin/patch_pasarguard.py
   plugin/patch_backup_api.py
+  plugin/patch_shield_api.py
   plugin/integrate-dashboard.sh
+  plugin/integrate-shield.sh
   plugin/hs-plugin.js
   plugin/hs-tab-fix.js
   plugin/hs-node-pro.js
   plugin/hs-backup.js
   plugin/hs-backup-tab-watchdog.js
   plugin/hs-admin-time.js
+  plugin/hs-shield.js
   cli/hs-pg
   systemd/hs-pg-integrator.service
   systemd/hs-pg-integrator.timer
   systemd/hs-pg-integrator.path
   systemd/hs-pg-backup-agent.service
+  systemd/hs-shield-agent.service
+  systemd/hs-shield-integrator.service
 )
 for file in "${files[@]}"; do
   mkdir -p "$TMP/$(dirname "$file")"
@@ -68,8 +75,11 @@ python3 -m py_compile \
   "$TMP/backend/hs_admin_time_job.py" \
   "$TMP/backend/hs_backup_api.py" \
   "$TMP/backend/hs_backup_agent.py" \
+  "$TMP/backend/hs_shield_api.py" \
+  "$TMP/backend/hs_shield_agent.py" \
   "$TMP/plugin/patch_pasarguard.py" \
   "$TMP/plugin/patch_backup_api.py" \
+  "$TMP/plugin/patch_shield_api.py" \
   || fail "Python validation failed"
 
 if command -v node >/dev/null 2>&1; then
@@ -79,8 +89,9 @@ if command -v node >/dev/null 2>&1; then
   node --check "$TMP/plugin/hs-backup.js" || fail "hs-backup.js validation failed"
   node --check "$TMP/plugin/hs-backup-tab-watchdog.js" || fail "hs-backup-tab-watchdog.js validation failed"
   node --check "$TMP/plugin/hs-admin-time.js" || fail "hs-admin-time.js validation failed"
+  node --check "$TMP/plugin/hs-shield.js" || fail "hs-shield.js validation failed"
 fi
-bash -n "$TMP/plugin/integrate-dashboard.sh" "$TMP/cli/hs-pg" || fail "Shell validation failed"
+bash -n "$TMP/plugin/integrate-dashboard.sh" "$TMP/plugin/integrate-shield.sh" "$TMP/cli/hs-pg" || fail "Shell validation failed"
 
 backup="$ROOT/backups/$(date +%Y%m%d-%H%M%S)"
 [[ -d "$ROOT" ]] && {
@@ -94,15 +105,20 @@ install -m 0644 "$TMP/backend/hs_admin_time.py" "$ROOT/backend/hs_admin_time.py"
 install -m 0644 "$TMP/backend/hs_admin_time_job.py" "$ROOT/backend/hs_admin_time_job.py"
 install -m 0644 "$TMP/backend/hs_backup_api.py" "$ROOT/backend/hs_backup_api.py"
 install -m 0755 "$TMP/backend/hs_backup_agent.py" "$ROOT/backend/hs_backup_agent.py"
+install -m 0644 "$TMP/backend/hs_shield_api.py" "$ROOT/backend/hs_shield_api.py"
+install -m 0755 "$TMP/backend/hs_shield_agent.py" "$ROOT/backend/hs_shield_agent.py"
 install -m 0755 "$TMP/plugin/patch_pasarguard.py" "$ROOT/plugin/patch_pasarguard.py"
 install -m 0755 "$TMP/plugin/patch_backup_api.py" "$ROOT/plugin/patch_backup_api.py"
+install -m 0755 "$TMP/plugin/patch_shield_api.py" "$ROOT/plugin/patch_shield_api.py"
 install -m 0755 "$TMP/plugin/integrate-dashboard.sh" "$ROOT/plugin/integrate-dashboard.sh"
+install -m 0755 "$TMP/plugin/integrate-shield.sh" "$ROOT/plugin/integrate-shield.sh"
 install -m 0644 "$TMP/plugin/hs-plugin.js" "$ROOT/plugin/hs-plugin.js"
 install -m 0644 "$TMP/plugin/hs-tab-fix.js" "$ROOT/plugin/hs-tab-fix.js"
 install -m 0644 "$TMP/plugin/hs-node-pro.js" "$ROOT/plugin/hs-node-pro.js"
 install -m 0644 "$TMP/plugin/hs-backup.js" "$ROOT/plugin/hs-backup.js"
 install -m 0644 "$TMP/plugin/hs-backup-tab-watchdog.js" "$ROOT/plugin/hs-backup-tab-watchdog.js"
 install -m 0644 "$TMP/plugin/hs-admin-time.js" "$ROOT/plugin/hs-admin-time.js"
+install -m 0644 "$TMP/plugin/hs-shield.js" "$ROOT/plugin/hs-shield.js"
 rm -f "$ROOT/plugin/hs-node-ip-fix.js"
 install -m 0755 "$TMP/cli/hs-pg" "$ROOT/cli/hs-pg"
 install -m 0755 "$TMP/cli/hs-pg" /usr/local/bin/hs-pg
@@ -125,11 +141,11 @@ JSON
   chmod 600 "$DATA/state.json"
 fi
 
-mkdir -p "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time"
-chmod 700 "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" || true
+mkdir -p "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" "$DATA/shield"
+chmod 700 "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" "$DATA/shield" || true
 
 if command -v systemctl >/dev/null 2>&1; then
-  for unit in hs-pg-integrator.service hs-pg-integrator.timer hs-pg-integrator.path hs-pg-backup-agent.service; do
+  for unit in hs-pg-integrator.service hs-pg-integrator.timer hs-pg-integrator.path hs-pg-backup-agent.service hs-shield-agent.service hs-shield-integrator.service; do
     install -m 0644 "$TMP/systemd/$unit" "/etc/systemd/system/$unit"
   done
   systemctl daemon-reload
@@ -140,17 +156,23 @@ if command -v systemctl >/dev/null 2>&1; then
   systemctl restart hs-pg-integrator.service >/dev/null 2>&1 || true
   systemctl enable hs-pg-backup-agent.service >/dev/null 2>&1 || true
   systemctl restart hs-pg-backup-agent.service >/dev/null 2>&1 || true
+  systemctl enable hs-shield-agent.service >/dev/null 2>&1 || true
+  systemctl restart hs-shield-agent.service >/dev/null 2>&1 || true
+  systemctl enable hs-shield-integrator.service >/dev/null 2>&1 || true
+  systemctl restart hs-shield-integrator.service >/dev/null 2>&1 || true
 fi
 
 log "$MODE files installed in $ROOT"
 "$ROOT/plugin/integrate-dashboard.sh" || fail "PasarGuard integration failed safely; no service was restarted"
+"$ROOT/plugin/integrate-shield.sh" || fail "HS Shield integration failed safely; panel networking was not changed"
 if [[ $RESTART -eq 1 ]]; then
   log "restarting PasarGuard as explicitly requested"
   /usr/local/bin/hs-pg restart
 else
   log "no PasarGuard service restart performed"
   log "host persistence guard is active and will re-apply HS Plugin after PasarGuard update/restart/recreate"
-  log "Web Backup and Admin Time backend hooks require one PasarGuard restart after first install/update"
-  log "run 'sudo hs-pg restart' when backend hooks need activation"
+  log "HS Shield Phase 1 is observe-only and does not modify firewall rules, Docker networking or panel traffic"
+  log "Web Backup, Admin Time and newly patched backend routes may require one PasarGuard restart after first install/update"
+  log "run 'sudo hs-pg restart' only when backend hooks need activation"
 fi
 log "future updates: sudo hs-pg update"
