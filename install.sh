@@ -37,6 +37,7 @@ raw(){ printf 'https://raw.githubusercontent.com/%s/%s/%s?hs=%s' "$REPO" "$REF" 
 files=(
   backend/hs_plugin_runtime.py
   backend/hs_plugin_api.py
+  backend/hs_admin_time.py
   backend/hs_backup_api.py
   backend/hs_backup_agent.py
   plugin/patch_pasarguard.py
@@ -47,6 +48,7 @@ files=(
   plugin/hs-node-pro.js
   plugin/hs-backup.js
   plugin/hs-backup-tab-watchdog.js
+  plugin/hs-admin-time.js
   cli/hs-pg
   systemd/hs-pg-integrator.service
   systemd/hs-pg-integrator.timer
@@ -61,6 +63,7 @@ done
 python3 -m py_compile \
   "$TMP/backend/hs_plugin_runtime.py" \
   "$TMP/backend/hs_plugin_api.py" \
+  "$TMP/backend/hs_admin_time.py" \
   "$TMP/backend/hs_backup_api.py" \
   "$TMP/backend/hs_backup_agent.py" \
   "$TMP/plugin/patch_pasarguard.py" \
@@ -73,6 +76,7 @@ if command -v node >/dev/null 2>&1; then
   node --check "$TMP/plugin/hs-node-pro.js" || fail "hs-node-pro.js validation failed"
   node --check "$TMP/plugin/hs-backup.js" || fail "hs-backup.js validation failed"
   node --check "$TMP/plugin/hs-backup-tab-watchdog.js" || fail "hs-backup-tab-watchdog.js validation failed"
+  node --check "$TMP/plugin/hs-admin-time.js" || fail "hs-admin-time.js validation failed"
 fi
 bash -n "$TMP/plugin/integrate-dashboard.sh" "$TMP/cli/hs-pg" || fail "Shell validation failed"
 
@@ -84,6 +88,7 @@ backup="$ROOT/backups/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$ROOT/backend" "$ROOT/plugin" "$ROOT/cli" "$ROOT/systemd" "$DATA"
 install -m 0644 "$TMP/backend/hs_plugin_runtime.py" "$ROOT/backend/hs_plugin_runtime.py"
 install -m 0644 "$TMP/backend/hs_plugin_api.py" "$ROOT/backend/hs_plugin_api.py"
+install -m 0644 "$TMP/backend/hs_admin_time.py" "$ROOT/backend/hs_admin_time.py"
 install -m 0644 "$TMP/backend/hs_backup_api.py" "$ROOT/backend/hs_backup_api.py"
 install -m 0755 "$TMP/backend/hs_backup_agent.py" "$ROOT/backend/hs_backup_agent.py"
 install -m 0755 "$TMP/plugin/patch_pasarguard.py" "$ROOT/plugin/patch_pasarguard.py"
@@ -94,6 +99,7 @@ install -m 0644 "$TMP/plugin/hs-tab-fix.js" "$ROOT/plugin/hs-tab-fix.js"
 install -m 0644 "$TMP/plugin/hs-node-pro.js" "$ROOT/plugin/hs-node-pro.js"
 install -m 0644 "$TMP/plugin/hs-backup.js" "$ROOT/plugin/hs-backup.js"
 install -m 0644 "$TMP/plugin/hs-backup-tab-watchdog.js" "$ROOT/plugin/hs-backup-tab-watchdog.js"
+install -m 0644 "$TMP/plugin/hs-admin-time.js" "$ROOT/plugin/hs-admin-time.js"
 rm -f "$ROOT/plugin/hs-node-ip-fix.js"
 install -m 0755 "$TMP/cli/hs-pg" "$ROOT/cli/hs-pg"
 install -m 0755 "$TMP/cli/hs-pg" /usr/local/bin/hs-pg
@@ -105,17 +111,19 @@ if [[ ! -f "$DATA/state.json" ]]; then
   "features": {
     "host_usage_ratio": {"enabled": true},
     "node_pro": {"enabled": false},
-    "backup_web": {"enabled": false}
+    "backup_web": {"enabled": false},
+    "admin_time_limit": {"enabled": true}
   },
   "inbound_offsets": {},
+  "admin_time_limits": {},
   "updated_at": null
 }
 JSON
   chmod 600 "$DATA/state.json"
 fi
 
-mkdir -p "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs"
-chmod 700 "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" || true
+mkdir -p "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time"
+chmod 700 "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" || true
 
 if command -v systemctl >/dev/null 2>&1; then
   for unit in hs-pg-integrator.service hs-pg-integrator.timer hs-pg-integrator.path hs-pg-backup-agent.service; do
@@ -139,7 +147,7 @@ if [[ $RESTART -eq 1 ]]; then
 else
   log "no PasarGuard service restart performed"
   log "host persistence guard is active and will re-apply HS Plugin after PasarGuard update/restart/recreate"
-  log "Web Backup backend route requires one PasarGuard restart after first install/update"
+  log "Web Backup and Admin Time backend hooks require one PasarGuard restart after first install/update"
   log "run 'sudo hs-pg restart' when backend hooks need activation"
 fi
 log "future updates: sudo hs-pg update"
