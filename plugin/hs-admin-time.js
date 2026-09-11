@@ -1,10 +1,10 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const FEATURE = 'admin_time_limit';
   const FEATURE_CARD_ID = 'hs-admin-time-card';
-  const DASHBOARD_CARD_ID = 'hs-admin-time-dashboard-card';
+  const ACCOUNT_CARD_ID = 'hs-account-overview-card';
   const FIELD_CLASS = 'hs-admin-time-field';
   const INPUT_CLASS = 'hs-admin-time-input';
   const MAX_DAYS = 36500;
@@ -16,16 +16,19 @@
   let observer = null;
   let syncQueued = false;
   let syncing = false;
-  let selfInfo = null;
-  let selfInfoFetchedAt = 0;
+  let account = null;
+  let selfTime = null;
+  let accountFetchedAt = 0;
+  let accountRefreshBusy = false;
+
   const formState = new WeakMap();
+  const draftCache = new Map();
   const pending = new Set();
 
   const isFa = () => {
     const lang = (document.documentElement.lang || '').toLowerCase();
     return lang.startsWith('fa') || document.documentElement.dir === 'rtl';
   };
-
   const tr = (en, fa) => (isFa() ? fa : en);
 
   function injectStyle() {
@@ -36,42 +39,48 @@
       document.head.appendChild(style);
     }
     style.textContent = `
-      @keyframes hs-admin-time-shine {
-        0%,70%,100%{background-position:0% 50%}
-        82%{background-position:100% 50%}
-      }
-      @keyframes hs-admin-time-pulse {
-        0%,100%{opacity:.52;transform:scale(1)}
-        50%{opacity:.9;transform:scale(1.015)}
-      }
-      .hs-admin-time-gold{
-        color:#e7bd59;
-        background:linear-gradient(100deg,#b97918 0%,#e4b64b 24%,#fff0ab 46%,#d3a13a 59%,#f5d77e 80%,#b97918 100%);
-        background-size:220% 100%;
-        -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
-        animation:hs-admin-time-shine 4.8s ease-in-out infinite;font-weight:650;
+      @keyframes hs-admin-gold{0%,70%,100%{background-position:0% 50%}84%{background-position:100% 50%}}
+      @keyframes hs-account-rise{0%{opacity:0;transform:translateY(10px) scale(.992)}100%{opacity:1;transform:translateY(0) scale(1)}}
+      @keyframes hs-account-glow{0%,100%{transform:translate3d(-10%,0,0) scale(1);opacity:.16}50%{transform:translate3d(18%,-6%,0) scale(1.12);opacity:.32}}
+      @keyframes hs-account-shine{0%{transform:translateX(-150%) skewX(-18deg)}58%,100%{transform:translateX(270%) skewX(-18deg)}}
+      @keyframes hs-account-pulse{0%,100%{box-shadow:0 0 0 0 rgba(217,170,66,.04)}50%{box-shadow:0 0 0 5px rgba(217,170,66,.035)}}
+      .hs-admin-time-gold,.hs-account-gold{
+        color:#e7bd59;background:linear-gradient(100deg,#b97918 0%,#e4b64b 24%,#fff0ab 46%,#d3a13a 60%,#f5d77e 80%,#b97918 100%);
+        background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+        animation:hs-admin-gold 4.8s ease-in-out infinite;font-weight:700
       }
       .${FIELD_CLASS}{min-width:0}
       .${FIELD_CLASS}[data-hs-suspended="true"] .${INPUT_CLASS}{border-color:rgba(217,170,66,.65)!important;box-shadow:0 0 0 1px rgba(217,170,66,.08)}
-      #${DASHBOARD_CARD_ID}[data-state="warning"]{border-color:rgba(217,170,66,.36)}
-      #${DASHBOARD_CARD_ID}[data-state="expired"]{border-color:rgba(239,68,68,.36)}
-      #${DASHBOARD_CARD_ID} .hs-time-progress-fill{transition:width .6s ease}
-      #${DASHBOARD_CARD_ID}[data-state="warning"] .hs-time-clock-glow{animation:hs-admin-time-pulse 2.8s ease-in-out infinite}
-      @media(prefers-reduced-motion:reduce){.hs-admin-time-gold,.hs-time-clock-glow{animation:none!important}.hs-time-progress-fill{transition:none!important}}
+      #${ACCOUNT_CARD_ID}{animation:hs-account-rise .48s cubic-bezier(.2,.8,.2,1) both}
+      #${ACCOUNT_CARD_ID} .hs-account-shell{isolation:isolate}
+      #${ACCOUNT_CARD_ID} .hs-account-glow{animation:hs-account-glow 7s ease-in-out infinite}
+      #${ACCOUNT_CARD_ID} .hs-account-progress-fill{position:relative;overflow:hidden;transition:width .75s cubic-bezier(.2,.8,.2,1)}
+      #${ACCOUNT_CARD_ID} .hs-account-progress-fill::after{content:"";position:absolute;inset:0 auto 0 0;width:34%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.34),transparent);animation:hs-account-shine 3.2s ease-in-out infinite}
+      #${ACCOUNT_CARD_ID}[data-state="warning"] .hs-account-shell{animation:hs-account-pulse 2.8s ease-in-out infinite}
+      #${ACCOUNT_CARD_ID} .hs-account-metric{transition:transform .22s ease,border-color .22s ease,background-color .22s ease}
+      #${ACCOUNT_CARD_ID} .hs-account-metric:hover{transform:translateY(-2px)}
+      #${ACCOUNT_CARD_ID} .hs-account-value{font-variant-numeric:tabular-nums}
+      @media(prefers-reduced-motion:reduce){
+        .hs-admin-time-gold,.hs-account-gold,#${ACCOUNT_CARD_ID},#${ACCOUNT_CARD_ID} .hs-account-glow,#${ACCOUNT_CARD_ID} .hs-account-shell,#${ACCOUNT_CARD_ID} .hs-account-progress-fill::after{animation:none!important}
+        #${ACCOUNT_CARD_ID} .hs-account-progress-fill,#${ACCOUNT_CARD_ID} .hs-account-metric{transition:none!important}
+      }
     `;
   }
 
-  function headers(extra = {}) {
-    const result = new Headers(extra);
+  function authHeaders(extra = {}) {
+    const headers = new Headers(extra);
     const token = localStorage.getItem('token');
-    if (token && !result.has('Authorization')) result.set('Authorization', `Bearer ${token}`);
-    return result;
+    if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+    return headers;
   }
 
-  async function api(path, options = {}) {
+  async function request(path, options = {}) {
     const {headers: supplied, ...rest} = options;
-    const response = await rawFetch(`/api/hs-plugin${path}`, {
-      credentials: 'same-origin', cache: 'no-store', ...rest, headers: headers(supplied || {}),
+    const response = await rawFetch(path, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      ...rest,
+      headers: authHeaders(supplied || {}),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -80,6 +89,19 @@
       throw error;
     }
     return data;
+  }
+
+  const hsApi = (path, options = {}) => request(`/api/hs-plugin${path}`, options);
+
+  function routePath() {
+    const hash = window.location.hash || '';
+    if (hash.startsWith('#/')) return hash.slice(1).split('?')[0];
+    return window.location.pathname || '/';
+  }
+
+  function isDashboardRoute() {
+    const route = routePath();
+    return route === '/' || route === '/dashboard';
   }
 
   function switchMarkup(value) {
@@ -114,7 +136,7 @@
       card.innerHTML = `
         <div class="space-y-0.5">
           <div class="flex items-center gap-2 text-xs font-medium sm:text-sm"><span>Admin Time Limit</span><span class="hs-admin-time-gold text-[10px] tracking-wide">HS</span></div>
-          <p class="text-muted-foreground text-xs sm:text-sm">Pause admin users when time expires, preserve their remaining clocks, and resume them after renewal.</p>
+          <p class="text-muted-foreground text-xs sm:text-sm">Pause admin users when time expires and resume their preserved time after renewal.</p>
         </div>
         <div class="shrink-0">${switchMarkup(enabled)}</div>`;
       const backup = document.getElementById('hs-backup-web-card');
@@ -137,72 +159,48 @@
     const status = document.querySelector('#hs-tab-status');
     if (status) status.textContent = 'Applying Admin Time Limit…';
     try {
-      const data = await api(`/features/${FEATURE}`, {
-        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: next}),
+      const data = await hsApi(`/features/${FEATURE}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: next}),
       });
-      setEnabled(!!data.enabled);
-      window.dispatchEvent(new CustomEvent('hs-plugin-feature-changed', {detail: {feature: FEATURE, enabled: !!data.enabled}}));
-      await refreshSelfInfo();
-      if (status) status.textContent = next ? 'Admin Time Limit enabled.' : 'Admin Time Limit disabled; suspended users resumed.';
+      enabled = !!data.enabled;
+      syncSwitch(button, enabled);
+      window.dispatchEvent(new CustomEvent('hs-plugin-feature-changed', {detail: {feature: FEATURE, enabled}}));
+      if (!enabled) removeFields();
+      if (status) status.textContent = enabled ? 'Admin Time Limit enabled.' : 'Admin Time Limit disabled; suspended users resumed.';
+      await refreshAccount();
     } catch (error) {
       syncSwitch(button, current);
       if (status) status.textContent = error.message;
     } finally {
       featureBusy = false;
       button.disabled = false;
+      queueSync();
     }
   }
 
-  function routePath() {
-    const hash = window.location.hash || '';
-    if (hash.startsWith('#/')) return hash.slice(1).split('?')[0];
-    return window.location.pathname || '/';
-  }
-
-  function isDashboardRoute() {
-    const route = routePath();
-    return route === '/' || route === '/dashboard';
+  async function refreshFeature() {
+    try {
+      const state = await hsApi('/state');
+      ownerAccess = true;
+      enabled = !!state?.features?.[FEATURE]?.enabled;
+      ensureFeatureCard();
+      if (!enabled) removeFields();
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        ownerAccess = false;
+        document.getElementById(FEATURE_CARD_ID)?.remove();
+        removeFields();
+      }
+    }
+    queueSync();
   }
 
   function directChildOf(parent, node) {
     let current = node;
     while (current && current.parentElement && current.parentElement !== parent) current = current.parentElement;
     return current?.parentElement === parent ? current : null;
-  }
-
-  function essentialsGrid(form) {
-    const username = form.querySelector('input[name="username"]');
-    let el = username?.parentElement || null;
-    while (el && el !== form) {
-      if (el.classList?.contains('grid') && el.classList?.contains('sm:grid-cols-2')) return el;
-      el = el.parentElement;
-    }
-    return null;
-  }
-
-  function findDataLimitItem(form) {
-    const named = form.querySelector('input[name="data_limit"]');
-    if (named) return formItemFor(named);
-
-    const grid = essentialsGrid(form);
-    if (!grid) return null;
-    const spans = [...grid.querySelectorAll('span')].filter(span => String(span.textContent || '').trim().toUpperCase() === 'GB');
-    for (const span of spans) {
-      const child = directChildOf(grid, span);
-      if (!child) continue;
-      const input = child.querySelector('input');
-      if (input) return child;
-    }
-    return null;
-  }
-
-  function adminForms() {
-    if (!enabled || !ownerAccess) return [];
-    return [...document.querySelectorAll('form')].filter(form => {
-      const username = form.querySelector('input[name="username"]');
-      const password = form.querySelector('input[name="password"]');
-      return !!username && !!password && !!findDataLimitItem(form);
-    });
   }
 
   function formItemFor(input) {
@@ -220,6 +218,38 @@
     return null;
   }
 
+  function essentialsGrid(form) {
+    const username = form.querySelector('input[name="username"]');
+    let el = username?.parentElement || null;
+    while (el && el !== form) {
+      if (el.classList?.contains('grid') && el.classList?.contains('sm:grid-cols-2')) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function findDataLimitItem(form) {
+    const named = form.querySelector('input[name="data_limit"]');
+    if (named) return formItemFor(named);
+    const grid = essentialsGrid(form);
+    if (!grid) return null;
+    const spans = [...grid.querySelectorAll('span')].filter(span => String(span.textContent || '').trim().toUpperCase() === 'GB');
+    for (const span of spans) {
+      const child = directChildOf(grid, span);
+      if (child?.querySelector('input')) return child;
+    }
+    return null;
+  }
+
+  function adminForms() {
+    if (!enabled || !ownerAccess) return [];
+    return [...document.querySelectorAll('form')].filter(form => {
+      const username = form.querySelector('input[name="username"]');
+      const password = form.querySelector('input[name="password"]');
+      return !!username && !!password && !!findDataLimitItem(form);
+    });
+  }
+
   function resetIcon() {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>';
   }
@@ -231,9 +261,7 @@
         <button type="button" data-hs-time-reset class="text-muted-foreground hover:bg-accent hover:text-foreground hidden h-7 items-center gap-1 rounded-md border px-2 text-[11px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50">${resetIcon()}<span>${tr('Reset', 'ریست')}</span></button>
       </div>
       <div class="relative min-w-0">
-        <div class="min-w-0 flex-1">
-          <input id="${id}" class="${INPUT_CLASS} border-border bg-input placeholder:text-input-placeholder focus-visible:ring-ring flex h-9 w-full rounded-lg border px-3 py-2 pr-14 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50" type="number" dir="ltr" inputmode="numeric" min="1" max="${MAX_DAYS}" step="1" placeholder="Unlimited" autocomplete="off">
-        </div>
+        <input id="${id}" class="${INPUT_CLASS} border-border bg-input placeholder:text-input-placeholder focus-visible:ring-ring flex h-9 w-full rounded-lg border px-3 py-2 pr-14 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50" type="number" dir="ltr" inputmode="numeric" min="1" max="${MAX_DAYS}" step="1" placeholder="Unlimited" autocomplete="off">
         <span class="text-muted-foreground pointer-events-none absolute inset-y-0 right-3 flex items-center text-[11px]">days</span>
       </div>
       <p class="hs-admin-time-status text-muted-foreground min-h-4 text-[11px]">${tr('Blank means unlimited time.', 'خالی = بدون محدودیت زمانی')}</p>`;
@@ -242,23 +270,43 @@
   function setFieldStatus(field, text, kind = 'muted') {
     const status = field?.querySelector('.hs-admin-time-status');
     if (!status) return;
-    status.className = `hs-admin-time-status min-h-4 text-[11px] ${kind === 'error' ? 'text-destructive' : kind === 'warn' ? 'text-amber-600 dark:text-amber-400' : kind === 'ok' ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`;
+    status.className = `hs-admin-time-status min-h-4 text-[11px] ${kind === 'error' ? 'text-destructive' : kind === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`;
     status.textContent = text;
   }
 
-  function formatRemaining(seconds, compact = false) {
+  function formatRemaining(seconds) {
     const total = Math.max(0, Math.floor(Number(seconds) || 0));
     const days = Math.floor(total / 86400);
     const hours = Math.floor((total % 86400) / 3600);
     const minutes = Math.floor((total % 3600) / 60);
-    if (compact) {
-      if (days > 0) return isFa() ? `${days} روز ${hours} ساعت` : `${days}d ${hours}h`;
-      if (hours > 0) return isFa() ? `${hours} ساعت ${minutes} دقیقه` : `${hours}h ${minutes}m`;
-      return isFa() ? `${minutes} دقیقه` : `${minutes}m`;
-    }
     if (days > 0) return isFa() ? `${days} روز و ${hours} ساعت باقی مانده` : `${days}d ${hours}h remaining`;
     if (hours > 0) return isFa() ? `${hours} ساعت و ${minutes} دقیقه باقی مانده` : `${hours}h ${minutes}m remaining`;
     return isFa() ? `${minutes} دقیقه باقی مانده` : `${minutes}m remaining`;
+  }
+
+  function parseDays(input) {
+    const raw = String(input?.value || '').trim();
+    if (!raw) return null;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1 || value > MAX_DAYS) {
+      throw new Error(tr(`Time must be a whole number from 1 to ${MAX_DAYS} days.`, `زمان باید عدد صحیح بین 1 تا ${MAX_DAYS} روز باشد.`));
+    }
+    return value;
+  }
+
+  function cacheDraft(username, value, touched = true) {
+    if (!username) return;
+    draftCache.set(username, {value: String(value ?? ''), touched, at: Date.now()});
+  }
+
+  function cachedDraft(username) {
+    const item = draftCache.get(username);
+    if (!item) return null;
+    if (Date.now() - item.at > 60000) {
+      draftCache.delete(username);
+      return null;
+    }
+    return item;
   }
 
   function updateResetButton(state) {
@@ -272,9 +320,9 @@
   function applyInfoToField(state, info) {
     state.info = info;
     state.supported = info.supported !== false;
-    const field = state.field;
     const input = state.input;
-    if (!field || !input) return;
+    const field = state.field;
+    if (!input || !field) return;
 
     if (!state.supported) {
       input.value = '';
@@ -286,15 +334,19 @@
     }
 
     input.disabled = false;
-    if (!state.touched) {
+    const cached = cachedDraft(state.username);
+    if (cached?.touched) {
+      state.touched = true;
+      state.dirty = true;
+      state.draft = cached.value;
+      input.value = cached.value;
+    } else if (!state.touched) {
       if (info.suspended) state.draft = info.duration_days ? String(info.duration_days) : '';
       else if (info.configured && info.remaining_seconds != null) state.draft = String(Math.max(1, Math.ceil(Number(info.remaining_seconds) / 86400)));
       else state.draft = '';
       input.value = state.draft;
-      state.originalDisplay = state.draft;
-    } else {
-      input.value = state.draft ?? input.value;
     }
+
     field.dataset.hsSuspended = info.suspended ? 'true' : 'false';
     if (info.suspended) setFieldStatus(field, tr('Expired · users paused. Set days or Reset to renew.', 'منقضی شده · کاربران متوقف‌اند. زمان جدید بزن یا ریست کن.'), 'warn');
     else if (info.configured) setFieldStatus(field, formatRemaining(info.remaining_seconds));
@@ -308,22 +360,25 @@
     if (!username) return;
     state.username = username;
     state.editing = !!(form.querySelector('input[name="username"]')?.disabled || form.querySelector('input[name="username"]')?.readOnly);
+
     if (!state.editing) {
       state.loaded = true;
       state.supported = true;
       state.info = {configured: false, unlimited: true, suspended: false, supported: true};
-      if (!state.touched) {
-        state.draft = '';
-        if (state.input) state.input.value = '';
+      const cached = cachedDraft(username);
+      if (cached) {
+        state.draft = cached.value;
+        state.touched = cached.touched;
+        state.dirty = cached.touched;
+        if (state.input) state.input.value = cached.value;
       }
-      setFieldStatus(state.field, tr('Blank means unlimited time.', 'خالی = بدون محدودیت زمانی'));
       updateResetButton(state);
       return;
     }
 
     state.hydrating = true;
     try {
-      const info = await api(`/admin-time/by-username/${encodeURIComponent(username)}`);
+      const info = await hsApi(`/admin-time/by-username/${encodeURIComponent(username)}`);
       state.loaded = true;
       applyInfoToField(state, info);
     } catch (error) {
@@ -334,29 +389,21 @@
     }
   }
 
-  function parseDays(input) {
-    const raw = String(input.value || '').trim();
-    if (!raw) return null;
-    const value = Number(raw);
-    if (!Number.isInteger(value) || value < 1 || value > MAX_DAYS) throw new Error(tr(`Time must be a whole number from 1 to ${MAX_DAYS} days.`, `زمان باید عدد صحیح بین 1 تا ${MAX_DAYS} روز باشد.`));
-    return value;
-  }
-
-  function createConfirmDialog({title, description, confirmLabel}) {
+  function confirmDialog({title, description, confirmLabel}) {
     return new Promise(resolve => {
       const overlay = document.createElement('div');
       overlay.className = 'fixed inset-0 z-[320] flex items-center justify-center bg-black/55 p-4 backdrop-blur-[1px]';
       overlay.innerHTML = `
         <div role="alertdialog" aria-modal="true" class="bg-background text-foreground w-full max-w-md rounded-xl border p-5 shadow-2xl">
-          <div class="mb-1 flex items-center gap-2 text-base font-semibold"><span class="hs-admin-time-gold">HS</span><span></span></div>
-          <p class="text-muted-foreground mt-2 text-sm leading-6"></p>
+          <div class="mb-1 flex items-center gap-2 text-base font-semibold"><span class="hs-admin-time-gold">HS</span><span data-title></span></div>
+          <p data-description class="text-muted-foreground mt-2 text-sm leading-6"></p>
           <div class="mt-5 flex justify-end gap-2">
             <button type="button" data-cancel class="hover:bg-accent h-9 rounded-md border px-4 text-sm font-medium transition-colors">${tr('Cancel', 'انصراف')}</button>
             <button type="button" data-confirm class="bg-primary text-primary-foreground hover:bg-primary/90 h-9 rounded-md px-4 text-sm font-medium transition-colors"></button>
           </div>
         </div>`;
-      overlay.querySelector('.font-semibold span:last-child').textContent = title;
-      overlay.querySelector('p').textContent = description;
+      overlay.querySelector('[data-title]').textContent = title;
+      overlay.querySelector('[data-description]').textContent = description;
       overlay.querySelector('[data-confirm]').textContent = confirmLabel;
       const finish = value => { overlay.remove(); resolve(value); };
       overlay.querySelector('[data-cancel]').addEventListener('click', () => finish(false));
@@ -367,28 +414,37 @@
     });
   }
 
-  async function resetTime(form, state, button) {
+  function flash(message, error = false) {
+    const box = document.createElement('div');
+    box.className = `bg-background text-foreground fixed right-4 top-4 z-[350] max-w-sm rounded-lg border px-4 py-3 text-sm shadow-xl ${error ? 'border-destructive/60' : 'border-border'}`;
+    box.textContent = message;
+    document.body.appendChild(box);
+    setTimeout(() => box.remove(), 5000);
+  }
+
+  async function resetTime(state, button) {
     if (!state.editing || !state.supported || !state.username || !state.info?.configured) return;
     const duration = Number(state.info.duration_days || 0);
     if (!duration) return;
-    const ok = await createConfirmDialog({
+    const ok = await confirmDialog({
       title: tr('Reset Admin Time', 'ریست زمان ادمین'),
       description: tr(`Reset ${state.username} to a fresh ${duration}-day period? User traffic and each user's remaining time will not be reset.`, `زمان ${state.username} از همین لحظه دوباره ${duration} روز می‌شود. حجم و زمان باقی‌مانده کاربران ریست نمی‌شود.`),
       confirmLabel: tr('Reset Time', 'ریست زمان'),
     });
     if (!ok) return;
 
-    button.disabled = true;
     const old = button.innerHTML;
+    button.disabled = true;
     button.textContent = tr('Resetting…', 'در حال ریست…');
     try {
-      const info = await api(`/admin-time/by-username/${encodeURIComponent(state.username)}/reset`, {method: 'POST'});
+      const info = await hsApi(`/admin-time/by-username/${encodeURIComponent(state.username)}/reset`, {method: 'POST'});
+      draftCache.delete(state.username);
       state.touched = false;
       state.dirty = false;
       state.loaded = true;
       applyInfoToField(state, info);
       flash(tr('Admin time reset successfully.', 'زمان ادمین با موفقیت ریست شد.'));
-      await refreshSelfInfo();
+      await refreshAccount();
     } catch (error) {
       flash(`HS Time: ${error.message}`, true);
     } finally {
@@ -414,6 +470,7 @@
       state.touched = true;
       state.dirty = true;
       state.draft = input.value;
+      cacheDraft(state.username, state.draft, true);
       input.setCustomValidity('');
       field.dataset.hsSuspended = 'false';
       try {
@@ -425,8 +482,7 @@
       }
     });
 
-    field.querySelector('[data-hs-time-reset]')?.addEventListener('click', event => resetTime(form, state, event.currentTarget));
-
+    field.querySelector('[data-hs-time-reset]')?.addEventListener('click', event => resetTime(state, event.currentTarget));
     if (state.loaded && state.info) applyInfoToField(state, state.info);
     else hydrateState(form, state);
   }
@@ -434,20 +490,33 @@
   function ensureField(form) {
     const dataItem = findDataLimitItem(form);
     if (!dataItem?.parentElement) return;
-
-    let state = formState.get(form);
     const username = form.querySelector('input[name="username"]')?.value?.trim() || '';
     const editing = !!(form.querySelector('input[name="username"]')?.disabled || form.querySelector('input[name="username"]')?.readOnly);
+
+    let state = formState.get(form);
     if (!state) {
-      state = {field: null, input: null, username, editing, touched: false, dirty: false, draft: '', originalDisplay: '', loaded: false, hydrating: false, supported: true, info: null};
+      const cached = cachedDraft(username);
+      state = {
+        field: null,
+        input: null,
+        username,
+        editing,
+        touched: !!cached?.touched,
+        dirty: !!cached?.touched,
+        draft: cached?.value || '',
+        loaded: false,
+        hydrating: false,
+        supported: true,
+        info: null,
+      };
       formState.set(form, state);
     } else if (state.username && username && state.username !== username) {
       state.username = username;
       state.editing = editing;
-      state.touched = false;
-      state.dirty = false;
-      state.draft = '';
-      state.originalDisplay = '';
+      const cached = cachedDraft(username);
+      state.touched = !!cached?.touched;
+      state.dirty = !!cached?.touched;
+      state.draft = cached?.value || '';
       state.loaded = false;
       state.hydrating = false;
       state.supported = true;
@@ -460,20 +529,11 @@
     const connected = state.field?.isConnected && state.field.closest('form') === form;
     if (!connected) mountField(form, state, dataItem);
     else if (state.field.previousElementSibling !== dataItem) dataItem.insertAdjacentElement('afterend', state.field);
-
     if (!state.loaded && !state.hydrating) hydrateState(form, state);
   }
 
   function removeFields() {
     document.querySelectorAll(`.${FIELD_CLASS}`).forEach(el => el.remove());
-  }
-
-  function flash(message, error = false) {
-    const box = document.createElement('div');
-    box.className = `bg-background text-foreground fixed right-4 top-4 z-[350] max-w-sm rounded-lg border px-4 py-3 text-sm shadow-xl ${error ? 'border-destructive/60' : 'border-border'}`;
-    box.textContent = message;
-    document.body.appendChild(box);
-    setTimeout(() => box.remove(), 5000);
   }
 
   function beginPending(form, event) {
@@ -495,8 +555,14 @@
 
     const dialog = form.closest('[role="dialog"]') || form.parentElement;
     const item = {
-      form, dialog, username, days, editing: state.editing, startedAt: Date.now(), successSeen: false, finalized: false,
-      existingBefore: state.editing ? Promise.resolve(true) : api(`/admin-time/by-username/${encodeURIComponent(username)}`).then(() => true).catch(error => error.status === 404 ? false : null),
+      dialog,
+      username,
+      days,
+      editing: state.editing,
+      startedAt: Date.now(),
+      successSeen: false,
+      finalized: false,
+      existingBefore: state.editing ? Promise.resolve(true) : hsApi(`/admin-time/by-username/${encodeURIComponent(username)}`).then(() => true).catch(error => error.status === 404 ? false : null),
     };
     pending.add(item);
     setTimeout(() => { if (!item.finalized) pending.delete(item); }, 25000);
@@ -509,10 +575,13 @@
     try {
       const existed = await item.existingBefore;
       if (!item.editing && existed === true) return;
-      await api(`/admin-time/by-username/${encodeURIComponent(item.username)}`, {
-        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({days: item.days}),
+      await hsApi(`/admin-time/by-username/${encodeURIComponent(item.username)}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({days: item.days}),
       });
-      await refreshSelfInfo();
+      draftCache.delete(item.username);
+      await refreshAccount();
     } catch (error) {
       flash(tr(`Admin saved, but HS Time failed: ${error.message}`, `ادمین ذخیره شد اما HS Time خطا داد: ${error.message}`), true);
     }
@@ -554,46 +623,152 @@
     ) || null;
   }
 
-  function dashboardCardMarkup() {
+  function formatBytes(value) {
+    const bytes = Math.max(0, Number(value) || 0);
+    if (bytes < 1024) return `${Math.round(bytes)} B`;
+    const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
+    let current = bytes;
+    let unit = -1;
+    do {
+      current /= 1024;
+      unit += 1;
+    } while (current >= 1024 && unit < units.length - 1);
+    const digits = current >= 100 ? 0 : current >= 10 ? 1 : 2;
+    return `${current.toFixed(digits)} ${units[unit]}`;
+  }
+
+  function remainingSeconds(info) {
+    if (!info?.configured || !info?.expires_at) return null;
+    const ts = Date.parse(info.expires_at);
+    if (!Number.isFinite(ts)) return Math.max(0, Math.floor(Number(info.remaining_seconds) || 0));
+    return Math.max(0, Math.floor((ts - Date.now()) / 1000));
+  }
+
+  function formatCompactTime(seconds) {
+    if (seconds == null) return tr('Unlimited', 'نامحدود');
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (total <= 0) return tr('Expired', 'منقضی');
+    const days = Math.floor(total / 86400);
+    const hours = Math.floor((total % 86400) / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    if (days > 0) return isFa() ? `${days} روز ${hours} ساعت` : `${days}d ${hours}h`;
+    if (hours > 0) return isFa() ? `${hours} ساعت ${minutes} دقیقه` : `${hours}h ${minutes}m`;
+    return isFa() ? `${minutes} دقیقه` : `${minutes}m`;
+  }
+
+  function formatDate(iso) {
+    if (!iso) return '';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+    try {
+      return new Intl.DateTimeFormat(isFa() ? 'fa-IR' : undefined, {dateStyle: 'medium', timeStyle: 'short'}).format(date);
+    } catch (_) {
+      return date.toLocaleString();
+    }
+  }
+
+  function accountState() {
+    const limit = Number(account?.data_limit || 0);
+    const used = Math.max(0, Number(account?.used_traffic || 0));
+    const remainingTraffic = limit > 0 ? Math.max(0, limit - used) : null;
+    const volumePercentRemaining = limit > 0 ? Math.max(0, Math.min(100, (remainingTraffic / limit) * 100)) : 100;
+    const volumePercentUsed = limit > 0 ? Math.max(0, Math.min(100, (used / limit) * 100)) : 0;
+
+    const timeEnabled = selfTime?.enabled !== false;
+    const timeConfigured = timeEnabled && !!selfTime?.configured;
+    const timeRemaining = timeConfigured ? remainingSeconds(selfTime) : null;
+    const timeTotal = Math.max(0, Number(selfTime?.duration_days || 0) * 86400);
+    const timePercentRemaining = timeConfigured && timeTotal > 0 ? Math.max(0, Math.min(100, ((timeRemaining || 0) / timeTotal) * 100)) : 100;
+
+    const timeExpired = timeConfigured && (!!selfTime?.suspended || (timeRemaining || 0) <= 0);
+    const trafficExpired = limit > 0 && remainingTraffic <= 0;
+    const warning = !timeExpired && !trafficExpired && ((timeConfigured && (timeRemaining || 0) <= 3 * 86400) || (limit > 0 && volumePercentRemaining <= 10));
+
+    let state = 'active';
+    let label = tr('Active', 'فعال');
+    const nativeStatus = String(account?.status || '').toLowerCase();
+    if (timeExpired) {
+      state = 'expired';
+      label = tr('Time expired', 'زمان تمام شده');
+    } else if (trafficExpired) {
+      state = 'expired';
+      label = tr('Traffic exhausted', 'حجم تمام شده');
+    } else if (nativeStatus === 'disabled') {
+      state = 'expired';
+      label = tr('Disabled', 'غیرفعال');
+    } else if (nativeStatus === 'limited') {
+      state = 'warning';
+      label = tr('Limited', 'محدود');
+    } else if (warning) {
+      state = 'warning';
+      label = tr('Ending soon', 'رو به پایان');
+    }
+
+    return {limit, used, remainingTraffic, volumePercentRemaining, volumePercentUsed, timeEnabled, timeConfigured, timeRemaining, timePercentRemaining, state, label};
+  }
+
+  function accountCardMarkup() {
     return `
-      <div class="group relative overflow-hidden rounded-lg border bg-card transition-all duration-300 hover:shadow-lg">
-        <div class="from-primary/10 dark:from-primary/5 pointer-events-none absolute inset-0 bg-gradient-to-r to-transparent opacity-40"></div>
-        <div class="relative z-10 p-4 sm:p-5 lg:p-6">
-          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="hs-account-shell bg-card relative overflow-hidden rounded-xl border p-4 shadow-sm transition-all duration-300 hover:shadow-lg sm:p-5 lg:p-6">
+        <div class="hs-account-glow pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-primary/20 blur-3xl"></div>
+        <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-400/55 to-transparent"></div>
+        <div class="relative z-10">
+          <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div class="flex min-w-0 items-center gap-3">
-              <div class="hs-time-clock-glow bg-primary/10 text-primary flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              <div class="bg-primary/10 text-primary flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/10">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M4 19V8"/><path d="M10 19V5"/><path d="M16 19v-8"/><path d="M22 19V3"/><path d="M2 19h22"/></svg>
               </div>
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2">
-                  <p class="text-muted-foreground text-xs font-medium sm:text-sm" data-hs-time-title></p>
-                  <span class="hs-admin-time-gold text-[10px] font-semibold tracking-wide">HS</span>
-                  <span data-hs-time-badge class="rounded-md border px-2 py-0.5 text-[10px] font-medium"></span>
+                  <h3 data-hs-account-title class="text-base font-semibold sm:text-lg"></h3>
+                  <span class="hs-account-gold text-[10px] tracking-wider">HS</span>
+                  <span data-hs-account-status class="rounded-md border px-2 py-0.5 text-[10px] font-medium"></span>
                 </div>
-                <p data-hs-time-expiry class="text-muted-foreground mt-1 truncate text-[11px] sm:text-xs"></p>
+                <p data-hs-account-subtitle class="text-muted-foreground mt-1 text-xs"></p>
               </div>
             </div>
-            <div class="min-w-0 text-start sm:text-end">
-              <div data-hs-time-remaining dir="ltr" class="text-2xl font-bold tracking-tight sm:text-3xl"></div>
-              <div data-hs-time-caption class="text-muted-foreground mt-1 text-[11px]"></div>
+            <div class="text-muted-foreground flex items-center gap-1.5 text-[11px]">
+              <span class="relative flex h-2 w-2"><span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-30"></span><span class="relative inline-flex h-2 w-2 rounded-full bg-green-500"></span></span>
+              <span>${tr('Live', 'زنده')}</span>
             </div>
           </div>
-          <div class="mt-4">
-            <div class="bg-muted/60 h-1.5 w-full overflow-hidden rounded-full">
-              <div class="hs-time-progress-fill bg-primary h-full rounded-full" style="width:0%"></div>
+
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div class="hs-account-metric bg-background/65 rounded-xl border p-4">
+              <div class="text-muted-foreground mb-2 text-[11px] font-medium">${tr('Available volume', 'حجم قابل استفاده')}</div>
+              <div data-hs-account-total class="hs-account-value text-xl font-bold tracking-tight sm:text-2xl" dir="ltr"></div>
+              <div data-hs-account-total-caption class="text-muted-foreground mt-1 text-[10px]"></div>
             </div>
-            <div class="text-muted-foreground mt-2 flex items-center justify-between gap-3 text-[10px] sm:text-[11px]">
-              <span data-hs-time-plan></span>
-              <span data-hs-time-percent dir="ltr"></span>
+            <div class="hs-account-metric bg-background/65 rounded-xl border p-4">
+              <div class="text-muted-foreground mb-2 text-[11px] font-medium">${tr('Remaining volume', 'حجم باقی‌مانده')}</div>
+              <div data-hs-account-remaining class="hs-account-value text-xl font-bold tracking-tight sm:text-2xl" dir="ltr"></div>
+              <div data-hs-account-used class="text-muted-foreground mt-1 text-[10px]"></div>
+            </div>
+            <div class="hs-account-metric bg-background/65 rounded-xl border p-4">
+              <div class="text-muted-foreground mb-2 text-[11px] font-medium">${tr('Remaining time', 'زمان باقی‌مانده')}</div>
+              <div data-hs-account-time class="hs-account-value text-xl font-bold tracking-tight sm:text-2xl" dir="ltr"></div>
+              <div data-hs-account-expiry class="text-muted-foreground mt-1 text-[10px]"></div>
+            </div>
+          </div>
+
+          <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div class="bg-muted/25 rounded-xl border p-3.5 sm:p-4">
+              <div class="mb-2 flex items-center justify-between gap-3 text-[11px]"><span class="text-muted-foreground">${tr('Traffic usage', 'مصرف حجم')}</span><span data-hs-account-traffic-percent class="font-semibold" dir="ltr"></span></div>
+              <div class="bg-muted h-2.5 overflow-hidden rounded-full"><div data-hs-account-traffic-fill class="hs-account-progress-fill bg-primary h-full rounded-full" style="width:0%"></div></div>
+            </div>
+            <div class="bg-muted/25 rounded-xl border p-3.5 sm:p-4">
+              <div class="mb-2 flex items-center justify-between gap-3 text-[11px]"><span class="text-muted-foreground">${tr('Account lifetime', 'زمان اعتبار اکانت')}</span><span data-hs-account-time-percent class="font-semibold" dir="ltr"></span></div>
+              <div class="bg-muted h-2.5 overflow-hidden rounded-full"><div data-hs-account-time-fill class="hs-account-progress-fill h-full rounded-full bg-amber-500" style="width:0%"></div></div>
             </div>
           </div>
         </div>
       </div>`;
   }
 
-  function ensureDashboardCard() {
-    const shouldShow = !!selfInfo && selfInfo.enabled !== false && selfInfo.supported !== false && isDashboardRoute();
-    let host = document.getElementById(DASHBOARD_CARD_ID);
+  function ensureAccountCard() {
+    const isOwner = !!account?.role?.is_owner;
+    const shouldShow = !!account && !isOwner && isDashboardRoute();
+    let host = document.getElementById(ACCOUNT_CARD_ID);
     if (!shouldShow) {
       host?.remove();
       return null;
@@ -602,122 +777,84 @@
     if (!stack) return null;
     if (!host) {
       host = document.createElement('div');
-      host.id = DASHBOARD_CARD_ID;
+      host.id = ACCOUNT_CARD_ID;
       host.className = 'w-full';
-      host.innerHTML = dashboardCardMarkup();
+      host.innerHTML = accountCardMarkup();
     }
-    if (!host.isConnected || host.parentElement !== stack) {
-      const first = stack.firstElementChild;
-      if (first) first.insertAdjacentElement('afterend', host);
-      else stack.appendChild(host);
-    }
+    if (!host.isConnected || host.parentElement !== stack) stack.insertBefore(host, stack.firstElementChild);
     return host;
   }
 
-  function remainingFromInfo(info) {
-    if (!info?.configured || !info.expires_at) return null;
-    const ts = Date.parse(info.expires_at);
-    if (!Number.isFinite(ts)) return Math.max(0, Number(info.remaining_seconds) || 0);
-    return Math.max(0, Math.floor((ts - Date.now()) / 1000));
-  }
+  function renderAccountCard() {
+    const host = ensureAccountCard();
+    if (!host || !account) return;
+    const s = accountState();
+    host.dataset.state = s.state;
 
-  function formatExpiry(iso) {
-    const date = iso ? new Date(iso) : null;
-    if (!date || Number.isNaN(date.getTime())) return '';
-    try {
-      return new Intl.DateTimeFormat(isFa() ? 'fa-IR' : undefined, {dateStyle: 'medium', timeStyle: 'short'}).format(date);
-    } catch (_) {
-      return date.toLocaleString();
-    }
-  }
+    host.querySelector('[data-hs-account-title]').textContent = tr('Your Account', 'وضعیت اکانت شما');
+    host.querySelector('[data-hs-account-subtitle]').textContent = account.username
+      ? tr(`Live allowance for ${account.username}`, `نمایش زنده اعتبار و حجم ${account.username}`)
+      : tr('Live account allowance', 'نمایش زنده اعتبار اکانت');
 
-  function renderDashboardCard() {
-    const host = ensureDashboardCard();
-    if (!host || !selfInfo) return;
-    const configured = !!selfInfo.configured;
-    const suspended = !!selfInfo.suspended;
-    const remaining = remainingFromInfo(selfInfo);
-    const total = Math.max(0, Number(selfInfo.duration_days || 0) * 86400);
-    const percent = configured && total > 0 ? Math.max(0, Math.min(100, ((remaining || 0) / total) * 100)) : 100;
-    const warning = configured && !suspended && (remaining || 0) <= 3 * 86400;
-    const state = suspended || (configured && (remaining || 0) <= 0) ? 'expired' : warning ? 'warning' : configured ? 'active' : 'unlimited';
-    host.dataset.state = state;
-
-    host.querySelector('[data-hs-time-title]').textContent = tr('Admin Account Time', 'زمان اکانت ادمین');
-    const badge = host.querySelector('[data-hs-time-badge]');
-    const remainingEl = host.querySelector('[data-hs-time-remaining]');
-    const expiryEl = host.querySelector('[data-hs-time-expiry]');
-    const caption = host.querySelector('[data-hs-time-caption]');
-    const plan = host.querySelector('[data-hs-time-plan]');
-    const percentEl = host.querySelector('[data-hs-time-percent]');
-    const fill = host.querySelector('.hs-time-progress-fill');
-
+    const badge = host.querySelector('[data-hs-account-status]');
+    badge.textContent = s.label;
     badge.className = 'rounded-md border px-2 py-0.5 text-[10px] font-medium';
-    if (state === 'expired') {
-      badge.textContent = tr('Expired', 'منقضی');
-      badge.classList.add('border-red-500/30', 'bg-red-500/10', 'text-red-600', 'dark:text-red-400');
-      remainingEl.textContent = tr('Expired', 'منقضی');
-      caption.textContent = tr('Users are paused until renewal', 'کاربران تا زمان تمدید متوقف‌اند');
-      fill.className = 'hs-time-progress-fill h-full rounded-full bg-red-500';
-    } else if (state === 'warning') {
-      badge.textContent = tr('Ending soon', 'رو به پایان');
-      badge.classList.add('border-amber-500/30', 'bg-amber-500/10', 'text-amber-600', 'dark:text-amber-400');
-      remainingEl.textContent = formatRemaining(remaining, true);
-      caption.textContent = tr('Remaining account time', 'زمان باقی‌مانده اکانت');
-      fill.className = 'hs-time-progress-fill h-full rounded-full bg-amber-500';
-    } else if (state === 'active') {
-      badge.textContent = tr('Active', 'فعال');
-      badge.classList.add('border-green-500/30', 'bg-green-500/10', 'text-green-600', 'dark:text-green-400');
-      remainingEl.textContent = formatRemaining(remaining, true);
-      caption.textContent = tr('Remaining account time', 'زمان باقی‌مانده اکانت');
-      fill.className = 'hs-time-progress-fill bg-primary h-full rounded-full';
+    if (s.state === 'expired') badge.classList.add('border-red-500/30', 'bg-red-500/10', 'text-red-600', 'dark:text-red-400');
+    else if (s.state === 'warning') badge.classList.add('border-amber-500/30', 'bg-amber-500/10', 'text-amber-600', 'dark:text-amber-400');
+    else badge.classList.add('border-green-500/30', 'bg-green-500/10', 'text-green-600', 'dark:text-green-400');
+
+    if (s.limit > 0) {
+      host.querySelector('[data-hs-account-total]').textContent = formatBytes(s.limit);
+      host.querySelector('[data-hs-account-total-caption]').textContent = tr('Total assigned traffic', 'کل حجم اختصاص داده‌شده');
+      host.querySelector('[data-hs-account-remaining]').textContent = formatBytes(s.remainingTraffic);
     } else {
-      badge.textContent = tr('Unlimited', 'نامحدود');
-      badge.classList.add('border-border', 'bg-muted/50', 'text-muted-foreground');
-      remainingEl.textContent = '∞';
-      caption.textContent = tr('No time limit', 'بدون محدودیت زمانی');
-      fill.className = 'hs-time-progress-fill bg-primary h-full rounded-full';
+      host.querySelector('[data-hs-account-total]').textContent = '∞';
+      host.querySelector('[data-hs-account-total-caption]').textContent = tr('Unlimited traffic', 'حجم نامحدود');
+      host.querySelector('[data-hs-account-remaining]').textContent = '∞';
+    }
+    host.querySelector('[data-hs-account-used]').textContent = `${tr('Used', 'مصرف‌شده')}: ${formatBytes(s.used)}`;
+
+    const timeEl = host.querySelector('[data-hs-account-time]');
+    const expiryEl = host.querySelector('[data-hs-account-expiry]');
+    if (!s.timeEnabled) {
+      timeEl.textContent = tr('Disabled', 'غیرفعال');
+      expiryEl.textContent = tr('Time limit feature is off', 'محدودیت زمانی غیرفعال است');
+    } else if (!s.timeConfigured) {
+      timeEl.textContent = '∞';
+      expiryEl.textContent = tr('Unlimited time', 'بدون محدودیت زمانی');
+    } else {
+      timeEl.textContent = formatCompactTime(s.timeRemaining);
+      expiryEl.textContent = selfTime?.expires_at ? `${tr('Expires', 'پایان')}: ${formatDate(selfTime.expires_at)}` : '';
     }
 
-    expiryEl.textContent = configured && selfInfo.expires_at
-      ? `${tr('Ends', 'پایان')}: ${formatExpiry(selfInfo.expires_at)}`
-      : tr('This admin account has no expiration date.', 'برای این اکانت تاریخ انقضا تنظیم نشده است.');
-    plan.textContent = configured && selfInfo.duration_days
-      ? `${tr('Plan', 'دوره')}: ${selfInfo.duration_days} ${tr('days', 'روز')}`
-      : tr('Unlimited plan', 'دوره نامحدود');
-    percentEl.textContent = configured ? `${percent.toFixed(1)}%` : '100%';
-    fill.style.width = `${configured ? percent : 100}%`;
+    const trafficFill = host.querySelector('[data-hs-account-traffic-fill]');
+    trafficFill.style.width = `${s.limit > 0 ? s.volumePercentUsed : 0}%`;
+    host.querySelector('[data-hs-account-traffic-percent]').textContent = s.limit > 0 ? `${s.volumePercentUsed.toFixed(1)}%` : tr('Unlimited', 'نامحدود');
+    trafficFill.className = 'hs-account-progress-fill h-full rounded-full ' + (s.limit > 0 && s.volumePercentRemaining <= 10 ? 'bg-red-500' : s.limit > 0 && s.volumePercentRemaining <= 25 ? 'bg-amber-500' : 'bg-primary');
+
+    const timeFill = host.querySelector('[data-hs-account-time-fill]');
+    timeFill.style.width = `${s.timeConfigured ? s.timePercentRemaining : 100}%`;
+    host.querySelector('[data-hs-account-time-percent]').textContent = s.timeConfigured ? `${s.timePercentRemaining.toFixed(1)}%` : tr('Unlimited', 'نامحدود');
+    timeFill.className = 'hs-account-progress-fill h-full rounded-full ' + (s.timeConfigured && s.timePercentRemaining <= 10 ? 'bg-red-500' : 'bg-amber-500');
   }
 
-  async function refreshSelfInfo() {
+  async function refreshAccount() {
+    if (accountRefreshBusy) return;
+    accountRefreshBusy = true;
     try {
-      const info = await api('/admin-time/me');
-      selfInfo = info;
-      selfInfoFetchedAt = Date.now();
-    } catch (error) {
-      if (error.status === 401 || error.status === 404) selfInfo = null;
-    }
-    renderDashboardCard();
-  }
+      const [adminResult, timeResult] = await Promise.allSettled([
+        request('/api/admin'),
+        hsApi('/admin-time/me'),
+      ]);
+      if (adminResult.status === 'fulfilled') account = adminResult.value;
+      else if (adminResult.reason?.status === 401) account = null;
 
-  function setEnabled(value) {
-    enabled = !!value;
-    ensureFeatureCard();
-    if (!enabled) removeFields();
-    queueSync();
-  }
-
-  async function refreshFeature() {
-    try {
-      const state = await api('/state');
-      ownerAccess = true;
-      setEnabled(!!state?.features?.[FEATURE]?.enabled);
-    } catch (error) {
-      if (error.status === 403 || error.status === 401) {
-        ownerAccess = false;
-        removeFields();
-        document.getElementById(FEATURE_CARD_ID)?.remove();
-      }
+      if (timeResult.status === 'fulfilled') selfTime = timeResult.value;
+      else if (timeResult.reason?.status === 401 || timeResult.reason?.status === 404) selfTime = null;
+      accountFetchedAt = Date.now();
+    } finally {
+      accountRefreshBusy = false;
+      renderAccountCard();
     }
   }
 
@@ -728,7 +865,7 @@
       ensureFeatureCard();
       if (enabled && ownerAccess) adminForms().forEach(ensureField);
       processPending();
-      renderDashboardCard();
+      renderAccountCard();
     } finally {
       syncing = false;
     }
@@ -748,12 +885,15 @@
     document.addEventListener('submit', event => {
       if (event.target instanceof HTMLFormElement && formState.has(event.target)) beginPending(event.target, event);
     }, true);
-    window.addEventListener('hashchange', () => { queueSync(); refreshSelfInfo(); });
-    window.addEventListener('popstate', () => { queueSync(); refreshSelfInfo(); });
+
+    window.addEventListener('hashchange', () => { queueSync(); refreshAccount(); });
+    window.addEventListener('popstate', () => { queueSync(); refreshAccount(); });
     window.addEventListener('hs-plugin-feature-changed', event => {
       if (event.detail?.feature === FEATURE) {
-        setEnabled(!!event.detail.enabled);
-        refreshSelfInfo();
+        enabled = !!event.detail.enabled;
+        if (!enabled) removeFields();
+        queueSync();
+        refreshAccount();
       }
     });
 
@@ -764,12 +904,12 @@
     observer.observe(document.documentElement, {childList: true, subtree: true});
 
     refreshFeature();
-    refreshSelfInfo();
+    refreshAccount();
     setInterval(refreshFeature, 60000);
-    setInterval(refreshSelfInfo, 30000);
+    setInterval(refreshAccount, 15000);
     setInterval(() => {
       processPending();
-      if (selfInfo && Date.now() - selfInfoFetchedAt < 120000) renderDashboardCard();
+      if (account && Date.now() - accountFetchedAt < 60000) renderAccountCard();
     }, 1000);
     setInterval(syncNow, 500);
     queueSync();
@@ -780,7 +920,10 @@
 
   window.HSAdminTime = {
     version: VERSION,
-    refresh: async () => { await Promise.allSettled([refreshFeature(), refreshSelfInfo()]); queueSync(); },
+    refresh: async () => {
+      await Promise.allSettled([refreshFeature(), refreshAccount()]);
+      queueSync();
+    },
     get enabled() { return enabled; },
     diagnostics: () => ({
       version: VERSION,
@@ -789,10 +932,13 @@
       route: routePath(),
       fields: document.querySelectorAll(`.${FIELD_CLASS}`).length,
       forms: adminForms().length,
-      dashboardCard: !!document.getElementById(DASHBOARD_CARD_ID),
-      selfConfigured: !!selfInfo?.configured,
-      selfSupported: selfInfo?.supported,
-      selfSuspended: !!selfInfo?.suspended,
+      account: account?.username || null,
+      owner: !!account?.role?.is_owner,
+      dataLimit: account?.data_limit ?? null,
+      usedTraffic: account?.used_traffic ?? null,
+      timeConfigured: !!selfTime?.configured,
+      timeEnabled: selfTime?.enabled,
+      accountCard: !!document.getElementById(ACCOUNT_CARD_ID),
       pending: pending.size,
     }),
   };
