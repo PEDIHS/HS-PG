@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const FEATURE = 'admin_time_limit';
   const FEATURE_CARD_ID = 'hs-admin-time-card';
   const FIELD_CLASS = 'hs-admin-time-field';
@@ -138,19 +138,6 @@
     return window.location.pathname || '/';
   }
 
-  function onAdminsPage() {
-    return routePath() === '/admins' || routePath().startsWith('/admins/');
-  }
-
-  function adminForms() {
-    if (!enabled || !ownerAccess || !onAdminsPage()) return [];
-    return [...document.querySelectorAll('form')].filter(form =>
-      form.querySelector('input[name="username"]') &&
-      form.querySelector('input[name="data_limit"]') &&
-      form.querySelector('input[name="password"]')
-    );
-  }
-
   function formItemFor(input) {
     if (!input) return null;
     if (input.id) {
@@ -160,10 +147,60 @@
       } catch (_) {}
     }
     let el = input.parentElement;
-    for (let i = 0; el && i < 5; i += 1, el = el.parentElement) {
+    for (let i = 0; el && i < 6; i += 1, el = el.parentElement) {
       if (el.classList?.contains('space-y-2')) return el;
     }
     return null;
+  }
+
+  function findDataLimitItem(form) {
+    const namedInput = form.querySelector('input[name="data_limit"]');
+    const namedItem = formItemFor(namedInput);
+    if (namedItem) return namedItem;
+
+    // PasarGuard's AdminDataLimitField intentionally does not forward the
+    // react-hook-form field/name to DecimalInput, so the real input has no
+    // name="data_limit". Detect the native field by its label/GB suffix first.
+    const labels = [...form.querySelectorAll('label')];
+    for (const label of labels) {
+      const text = (label.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (
+        text.includes('admin data limit') ||
+        text.includes('data limit') ||
+        /محدودیت.*(حجم|داده)/.test(text) ||
+        /(حجم|داده).*محدودیت/.test(text)
+      ) {
+        const item = label.parentElement;
+        if (item?.querySelector('input')) return item;
+      }
+    }
+
+    const usernameItem = formItemFor(form.querySelector('input[name="username"]'));
+    const essentialsGrid = usernameItem?.parentElement;
+    if (!essentialsGrid) return null;
+
+    const candidates = [...essentialsGrid.children].filter(child => child instanceof Element && child.querySelector('input'));
+    const gbItem = candidates.find(child =>
+      [...child.querySelectorAll('span')].some(span => (span.textContent || '').trim().toUpperCase() === 'GB')
+    );
+    if (gbItem) return gbItem;
+
+    // Current native Admin modal order is username, role, password,
+    // password-confirm, status, data-limit. Keep this as a final structural
+    // fallback so locale or label changes do not make the HS field disappear.
+    return candidates.length >= 5 ? candidates[candidates.length - 1] : null;
+  }
+
+  function isAdminForm(form) {
+    if (!(form instanceof HTMLFormElement)) return false;
+    const username = form.querySelector('input[name="username"]');
+    const password = form.querySelector('input[name="password"]');
+    return !!(username && password && findDataLimitItem(form));
+  }
+
+  function adminForms() {
+    if (!enabled || !ownerAccess) return [];
+    return [...document.querySelectorAll('form')].filter(isAdminForm);
   }
 
   function fieldMarkup(id) {
@@ -247,8 +284,7 @@
 
   function ensureField(form) {
     if (form.querySelector(`.${FIELD_CLASS}`)) return;
-    const dataInput = form.querySelector('input[name="data_limit"]');
-    const item = formItemFor(dataInput);
+    const item = findDataLimitItem(form);
     if (!item?.parentElement) return;
 
     const field = document.createElement('div');
@@ -419,6 +455,15 @@
     version: VERSION,
     refresh: refreshFeature,
     get enabled() { return enabled; },
-    diagnostics: () => ({version: VERSION, enabled, ownerAccess, route: routePath(), fields: document.querySelectorAll(`.${FIELD_CLASS}`).length, pending: pending.size}),
+    diagnostics: () => ({
+      version: VERSION,
+      enabled,
+      ownerAccess,
+      route: routePath(),
+      forms: document.querySelectorAll('form').length,
+      adminForms: adminForms().length,
+      fields: document.querySelectorAll(`.${FIELD_CLASS}`).length,
+      pending: pending.size,
+    }),
   };
 })();
