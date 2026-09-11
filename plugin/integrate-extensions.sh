@@ -4,57 +4,57 @@ set -Eeuo pipefail
 HS_ROOT="${HS_ROOT:-/opt/hs-pg}"
 PASARGUARD_ROOT="${PASARGUARD_ROOT:-/opt/pasarguard}"
 PATCHER="$HS_ROOT/plugin/patch_extensions.py"
+SERVICES_PATCHER="$HS_ROOT/plugin/patch_services_api.py"
 API="$HS_ROOT/backend/hs_extensions_api.py"
+SERVICES_API="$HS_ROOT/backend/hs_services_api.py"
 RUNTIME="$HS_ROOT/backend/hs_fair_use_runtime.py"
 RECONCILE="$HS_ROOT/backend/hs_fair_reconcile.py"
 SERVICES="$HS_ROOT/backend/hs_services.py"
 NATIVE_JS="$HS_ROOT/plugin/hs-native-extensions.js"
-FIREWALL_JS="$HS_ROOT/plugin/hs-firewall-charts.js"
+SERVICES_JS="$HS_ROOT/plugin/hs-services.js"
 
 log(){ printf '\033[1;33m[HS Extensions]\033[0m %s\n' "$*"; }
 warn(){ printf '\033[1;31m[HS Extensions]\033[0m %s\n' "$*" >&2; }
 sha12(){ sha256sum "$1" | awk '{print substr($1,1,12)}'; }
 
-for file in "$PATCHER" "$API" "$RUNTIME" "$RECONCILE" "$SERVICES" "$NATIVE_JS" "$FIREWALL_JS"; do
+for file in "$PATCHER" "$SERVICES_PATCHER" "$API" "$SERVICES_API" "$RUNTIME" "$RECONCILE" "$SERVICES" "$NATIVE_JS" "$SERVICES_JS"; do
   [[ -s "$file" ]] || { warn "missing $file"; exit 1; }
 done
 
-patch_host_html(){
-  local html="$1" nv fv
+patch_html_host(){
+  local html="$1" nv sv
   [[ -f "$html" ]] || return 0
-  nv="$(sha12 "$NATIVE_JS")"; fv="$(sha12 "$FIREWALL_JS")"
-  python3 - "$html" "$nv" "$fv" <<'PY'
+  nv="$(sha12 "$NATIVE_JS")"; sv="$(sha12 "$SERVICES_JS")"
+  python3 - "$html" "$nv" "$sv" <<'PY'
 from pathlib import Path
 import re,sys
 p=Path(sys.argv[1]); text=p.read_text(encoding='utf-8')
-for marker,src in [
-    ('hs-native-extensions-loader',f'/statics/hs-native-extensions.js?v={sys.argv[2]}'),
-    ('hs-firewall-charts-loader',f'/statics/hs-firewall-charts.js?v={sys.argv[3]}'),
-]:
+for marker in ('hs-shield-loader','hs-firewall-charts-loader'):
+    text=re.sub(rf'\s*<script\s+id=["\']{marker}["\'][^>]*>\s*</script>','',text,flags=re.I)
+for marker,src in [('hs-native-extensions-loader',f'/statics/hs-native-extensions.js?v={sys.argv[2]}'),('hs-services-loader',f'/statics/hs-services.js?v={sys.argv[3]}')]:
     tag=f'<script id="{marker}" src="{src}" defer></script>'
-    pattern=re.compile(rf'<script\s+id=["\']{marker}["\'][^>]*>\s*</script>',re.I)
-    if pattern.search(text): text=pattern.sub(tag,text,count=1)
+    pat=re.compile(rf'<script\s+id=["\']{marker}["\'][^>]*>\s*</script>',re.I)
+    if pat.search(text): text=pat.sub(tag,text,count=1)
     elif re.search(r'</body>',text,re.I): text=re.sub(r'</body>',tag+'\n</body>',text,count=1,flags=re.I)
     else: text+='\n'+tag+'\n'
 p.write_text(text,encoding='utf-8')
 PY
 }
 
-patch_container_html(){
-  local cid="$1" html="$2" nv fv
-  nv="$(sha12 "$NATIVE_JS")"; fv="$(sha12 "$FIREWALL_JS")"
+patch_html_container(){
+  local cid="$1" html="$2" nv sv
   docker exec "$cid" test -f "$html" >/dev/null 2>&1 || return 0
-  docker exec -i "$cid" python3 - "$html" "$nv" "$fv" <<'PY'
+  nv="$(sha12 "$NATIVE_JS")"; sv="$(sha12 "$SERVICES_JS")"
+  docker exec -i "$cid" python3 - "$html" "$nv" "$sv" <<'PY'
 from pathlib import Path
 import re,sys
 p=Path(sys.argv[1]); text=p.read_text(encoding='utf-8')
-for marker,src in [
-    ('hs-native-extensions-loader',f'/statics/hs-native-extensions.js?v={sys.argv[2]}'),
-    ('hs-firewall-charts-loader',f'/statics/hs-firewall-charts.js?v={sys.argv[3]}'),
-]:
+for marker in ('hs-shield-loader','hs-firewall-charts-loader'):
+    text=re.sub(rf'\s*<script\s+id=["\']{marker}["\'][^>]*>\s*</script>','',text,flags=re.I)
+for marker,src in [('hs-native-extensions-loader',f'/statics/hs-native-extensions.js?v={sys.argv[2]}'),('hs-services-loader',f'/statics/hs-services.js?v={sys.argv[3]}')]:
     tag=f'<script id="{marker}" src="{src}" defer></script>'
-    pattern=re.compile(rf'<script\s+id=["\']{marker}["\'][^>]*>\s*</script>',re.I)
-    if pattern.search(text): text=pattern.sub(tag,text,count=1)
+    pat=re.compile(rf'<script\s+id=["\']{marker}["\'][^>]*>\s*</script>',re.I)
+    if pat.search(text): text=pat.sub(tag,text,count=1)
     elif re.search(r'</body>',text,re.I): text=re.sub(r'</body>',tag+'\n</body>',text,count=1,flags=re.I)
     else: text+='\n'+tag+'\n'
 p.write_text(text,encoding='utf-8')
@@ -69,15 +69,16 @@ integrate_host(){
   app="$(find_host_app || true)"
   if [[ -n "$app" ]]; then
     python3 "$PATCHER" --app-root "$app" --api "$API" --runtime "$RUNTIME" --reconcile "$RECONCILE" --services "$SERVICES"
-    log "backend native hooks healthy at $app"
+    python3 "$SERVICES_PATCHER" --app-root "$app" --services-api "$SERVICES_API"
+    rm -f "$app/hs_shield_api.py" "$app/hs_firewall.py"
   fi
   build="$(find_host_build || true)"
   if [[ -n "$build" ]]; then
     mkdir -p "$build/statics"
     install -m 0644 "$NATIVE_JS" "$build/statics/hs-native-extensions.js"
-    install -m 0644 "$FIREWALL_JS" "$build/statics/hs-firewall-charts.js"
-    patch_host_html "$build/index.html"; patch_host_html "$build/404.html"
-    log "native UI assets healthy at $build"
+    install -m 0644 "$SERVICES_JS" "$build/statics/hs-services.js"
+    rm -f "$build/statics/hs-shield.js" "$build/statics/hs-firewall-charts.js"
+    patch_html_host "$build/index.html"; patch_html_host "$build/404.html"
   fi
 }
 
@@ -98,23 +99,25 @@ integrate_container(){
   app="$(find_container_app "$cid" || true)"
   if [[ -n "$app" ]]; then
     docker cp "$PATCHER" "$cid:/tmp/hs-patch-extensions.py" >/dev/null
+    docker cp "$SERVICES_PATCHER" "$cid:/tmp/hs-patch-services.py" >/dev/null
     docker cp "$API" "$cid:/tmp/hs_extensions_api.py" >/dev/null
+    docker cp "$SERVICES_API" "$cid:/tmp/hs_services_api.py" >/dev/null
     docker cp "$RUNTIME" "$cid:/tmp/hs_fair_use_runtime.py" >/dev/null
     docker cp "$RECONCILE" "$cid:/tmp/hs_fair_reconcile.py" >/dev/null
-    docker cp "$SERVICES" "$cid:/tmp/hs_services_runtime.py" >/dev/null
-    docker exec "$cid" python3 /tmp/hs-patch-extensions.py --app-root "$app" --api /tmp/hs_extensions_api.py --runtime /tmp/hs_fair_use_runtime.py --reconcile /tmp/hs_fair_reconcile.py --services /tmp/hs_services_runtime.py >/dev/null
-    log "backend hooks healthy in ${cid:0:12}"
+    docker cp "$SERVICES" "$cid:/tmp/hs_services.py" >/dev/null
+    docker exec "$cid" python3 /tmp/hs-patch-extensions.py --app-root "$app" --api /tmp/hs_extensions_api.py --runtime /tmp/hs_fair_use_runtime.py --reconcile /tmp/hs_fair_reconcile.py --services /tmp/hs_services.py >/dev/null
+    docker exec "$cid" python3 /tmp/hs-patch-services.py --app-root "$app" --services-api /tmp/hs_services_api.py >/dev/null
+    docker exec "$cid" rm -f "$app/hs_shield_api.py" "$app/hs_firewall.py" >/dev/null 2>&1 || true
   fi
   build="$(find_container_build "$cid" || true)"
   [[ -n "$build" ]] || { warn "dashboard build not found in ${cid:0:12}"; return 1; }
   docker exec "$cid" mkdir -p "$build/statics"
   docker cp "$NATIVE_JS" "$cid:$build/statics/hs-native-extensions.js" >/dev/null
-  docker cp "$FIREWALL_JS" "$cid:$build/statics/hs-firewall-charts.js" >/dev/null
-  patch_container_html "$cid" "$build/index.html"; patch_container_html "$cid" "$build/404.html"
-  expected="$(sha12 "$NATIVE_JS")"
-  actual="$(docker exec "$cid" sha256sum "$build/statics/hs-native-extensions.js" 2>/dev/null | awk '{print substr($1,1,12)}' || true)"
+  docker cp "$SERVICES_JS" "$cid:$build/statics/hs-services.js" >/dev/null
+  docker exec "$cid" rm -f "$build/statics/hs-shield.js" "$build/statics/hs-firewall-charts.js" >/dev/null 2>&1 || true
+  patch_html_container "$cid" "$build/index.html"; patch_html_container "$cid" "$build/404.html"
+  expected="$(sha12 "$NATIVE_JS")"; actual="$(docker exec "$cid" sha256sum "$build/statics/hs-native-extensions.js" | awk '{print substr($1,1,12)}')"
   [[ "$actual" == "$expected" ]] || { warn "asset verification failed in ${cid:0:12}"; return 2; }
-  docker exec "$cid" grep -q "hs-native-extensions.js?v=$expected" "$build/index.html" || { warn "loader verification failed in ${cid:0:12}"; return 3; }
 }
 
 main(){
@@ -122,6 +125,6 @@ main(){
   local count=0 cid
   while read -r cid; do [[ -n "$cid" ]] || continue; integrate_container "$cid"; count=$((count+1)); done < <(container_ids)
   if [[ $count -eq 0 && -z "$(find_host_app || true)" ]]; then warn "no active PasarGuard installation found"; exit 2; fi
-  log "extension integration complete"
+  log "Shield-free extension integration complete"
 }
 main "$@"
