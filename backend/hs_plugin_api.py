@@ -42,6 +42,7 @@ def _default_state() -> dict:
         "features": {
             "host_usage_ratio": {"enabled": True},
             "node_pro": {"enabled": False},
+            "backup_web": {"enabled": False},
         },
         "inbound_offsets": {},
         "updated_at": None,
@@ -59,6 +60,7 @@ def _load_state() -> dict:
     features = value.setdefault("features", {})
     features.setdefault("host_usage_ratio", {"enabled": True})
     features.setdefault("node_pro", {"enabled": False})
+    features.setdefault("backup_web", {"enabled": False})
     value.setdefault("inbound_offsets", {})
     return value
 
@@ -305,7 +307,7 @@ async def set_feature(
     body: ToggleBody,
     _owner: AdminDetails = Depends(_require_owner),
 ):
-    if feature_name not in {"host_usage_ratio", "node_pro"}:
+    if feature_name not in {"host_usage_ratio", "node_pro", "backup_web"}:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown HS Plugin feature")
     with _write_lock():
         state = _load_state()
