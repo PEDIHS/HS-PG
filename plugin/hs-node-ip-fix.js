@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const BUTTON = 'hs-node-ip-toggle';
   const VALUE = 'hs-node-ip-value';
   const MASK = '••••••••••••••';
@@ -38,15 +38,16 @@
 
     const isShown = shown.has(id);
     const desiredText = isShown ? endpoint : MASK;
-    if (span.textContent !== desiredText) span.textContent = desiredText;
-
     const desiredState = isShown ? 'shown' : 'hidden';
-    if (button.dataset.hsIpFixState !== desiredState) {
+    const desiredIcon = isShown ? eyeOff : eye;
+
+    if (span.textContent !== desiredText) span.textContent = desiredText;
+    if (button.dataset.hsIpFixState !== desiredState || button.innerHTML !== desiredIcon) {
       button.dataset.hsIpFixState = desiredState;
-      button.innerHTML = isShown ? eyeOff : eye;
-      button.setAttribute('aria-label', isShown ? 'Hide IP address' : 'Show IP address');
-      button.title = isShown ? 'Hide IP' : 'Show IP';
+      button.innerHTML = desiredIcon;
     }
+    button.setAttribute('aria-label', isShown ? 'Hide IP address' : 'Show IP address');
+    button.title = isShown ? 'Hide IP' : 'Show IP';
   }
 
   function syncAll() {
