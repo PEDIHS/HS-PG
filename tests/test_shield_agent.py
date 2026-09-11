@@ -1,4 +1,19 @@
-from backend.hs_shield_agent import DEFAULT_CONFIG, stage_for
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+
+spec = importlib.util.spec_from_file_location(
+    "hs_shield_agent_test",
+    Path(__file__).parents[1] / "backend" / "hs_shield_agent.py",
+)
+mod = importlib.util.module_from_spec(spec)
+assert spec.loader
+spec.loader.exec_module(mod)
+
+DEFAULT_CONFIG = mod.DEFAULT_CONFIG
+stage_for = mod.stage_for
 
 
 def test_normal_stage_under_baseline():
@@ -40,3 +55,11 @@ def test_disabled_goes_standby():
         {"pps": 1.0, "bps": 1.0},
     )
     assert stage == "standby"
+
+
+if __name__ == "__main__":
+    test_normal_stage_under_baseline()
+    test_elevated_stage_on_packet_spike()
+    test_attack_stage_on_syn_pressure()
+    test_disabled_goes_standby()
+    print("shield agent tests: OK")
