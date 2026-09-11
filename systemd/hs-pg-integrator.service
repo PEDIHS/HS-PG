@@ -1,15 +1,19 @@
 [Unit]
-Description=Persistent verified HS/Zomorod integration guard for PasarGuard
+Description=Low-overhead HS/Zomorod integration reconciliation for PasarGuard
 After=docker.service network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
-ExecStart=/bin/bash -lc 'set -u; while true; do found=0; if command -v docker >/dev/null 2>&1; then for cid in $(docker ps -q 2>/dev/null); do image=$(docker inspect -f "{{.Config.Image}}" "$cid" 2>/dev/null || true); case "$image" in *pasarguard/panel*) found=1; project=$(docker inspect -f "{{ index .Config.Labels \"com.docker.compose.project\" }}" "$cid" 2>/dev/null || true); [ -n "$project" ] || project=pasarguard; echo "[Plugin Guard] reconciling ${cid:0:12} compose-project=$project"; if [ -x /opt/hs-pg/plugin/integrate-dashboard.sh ]; then PASARGUARD_COMPOSE_PROJECT="$project" /opt/hs-pg/plugin/integrate-dashboard.sh || true; [ -x /opt/hs-pg/plugin/integrate-extensions.sh ] && PASARGUARD_COMPOSE_PROJECT="$project" /opt/hs-pg/plugin/integrate-extensions.sh || true; [ -x /opt/hs-pg/plugin/integrate-shield.sh ] && /opt/hs-pg/plugin/integrate-shield.sh || true; fi; if [ -x /opt/zomorod/plugin/integrate-dashboard.sh ]; then PASARGUARD_COMPOSE_PROJECT="$project" /opt/zomorod/plugin/integrate-dashboard.sh || true; fi ;; esac; done; fi; if [ "$found" -eq 0 ]; then [ -x /opt/hs-pg/plugin/integrate-dashboard.sh ] && /opt/hs-pg/plugin/integrate-dashboard.sh || true; [ -x /opt/hs-pg/plugin/integrate-extensions.sh ] && /opt/hs-pg/plugin/integrate-extensions.sh || true; [ -x /opt/hs-pg/plugin/integrate-shield.sh ] && /opt/hs-pg/plugin/integrate-shield.sh || true; [ -x /opt/zomorod/plugin/integrate-dashboard.sh ] && /opt/zomorod/plugin/integrate-dashboard.sh || true; fi; sleep 10; done'
-Restart=always
-RestartSec=2s
+Type=oneshot
 User=root
 Group=root
+UMask=0077
+ExecStart=/bin/bash -lc 'set -Eeuo pipefail; cfg=/var/lib/pasarguard/hs-plugin/shield/config.json; enabled=$(python3 -c "import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text()) if p.exists() else {}; print(1 if d.get(\"integration_guard_enabled\", True) else 0)" "$cfg" 2>/dev/null || echo 1); if [ "$enabled" != 1 ]; then echo "[HS Guard] disabled from panel"; exit 0; fi; if command -v flock >/dev/null 2>&1; then exec 9>/run/hs-pg-integrator.lock; flock -n 9 || exit 0; fi; for script in /opt/hs-pg/plugin/integrate-dashboard.sh /opt/hs-pg/plugin/integrate-extensions.sh /opt/hs-pg/plugin/integrate-shield.sh /opt/zomorod/plugin/integrate-dashboard.sh; do if [ -x "$script" ]; then "$script" || true; fi; done'
+Nice=10
+CPUWeight=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

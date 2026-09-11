@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""HS Shield host telemetry and staged threat detector.
+"""HS Shield host telemetry, staged threat detector and firewall control loop.
 
-Phase 1 is deliberately observe-first: this process never inserts firewall rules,
-restarts PasarGuard, or changes Docker networking. It builds the control-plane
-telemetry needed for safe, health-checked enforcement in later stages.
+The control loop is intentionally cheap. Expensive telemetry (ss, docker inspect and
+systemd probes) is sampled on a configurable cadence while firewall state changes are
+noticed within a couple of seconds.
 """
 from __future__ import annotations
 
@@ -15,17 +15,25 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
 from hs_firewall import FirewallController
 
 DATA_DIR = Path(os.getenv("HS_SHIELD_DATA_DIR", "/var/lib/pasarguard/hs-plugin/shield"))
 STATUS_FILE = DATA_DIR / "status.json"
 CONFIG_FILE = DATA_DIR / "config.json"
 EVENTS_FILE = DATA_DIR / "events.jsonl"
-INTERVAL = max(1.0, float(os.getenv("HS_SHIELD_INTERVAL", "2")))
+CONTROL_INTERVAL = max(1.0, float(os.getenv("HS_SHIELD_CONTROL_INTERVAL", "2")))
+NORMAL_SAMPLE_INTERVAL = max(3.0, float(os.getenv("HS_SHIELD_SAMPLE_INTERVAL", "5")))
+LOW_CPU_SAMPLE_INTERVAL = max(NORMAL_SAMPLE_INTERVAL, float(os.getenv("HS_SHIELD_LOW_CPU_INTERVAL", "12")))
+NORMAL_HEALTH_INTERVAL = max(20.0, float(os.getenv("HS_SHIELD_HEALTH_INTERVAL", "45")))
+LOW_CPU_HEALTH_INTERVAL = max(NORMAL_HEALTH_INTERVAL, float(os.getenv("HS_SHIELD_LOW_CPU_HEALTH_INTERVAL", "180")))
 MAX_EVENTS = 500
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": True,
+    "telemetry_enabled": True,
+    "low_cpu_mode": True,
+    "integration_guard_enabled": True,
     "mode": "observe",
     "auto_stage": True,
     "safe_fail_open": True,
@@ -180,6 +188,8 @@ def local_layers() -> dict[str, Any]:
 def stage_for(config: dict[str, Any], metrics: dict[str, float], baseline: dict[str, float]) -> tuple[str, list[str]]:
     if not config.get("enabled", True):
         return "standby", ["shield disabled"]
+    if not config.get("telemetry_enabled", True):
+        return "standby", ["live security telemetry disabled"]
     reasons: list[str] = []
     pps = metrics["pps"]
     bps = metrics["bps"]
@@ -242,57 +252,111 @@ def main() -> None:
     prev_bytes, prev_packets = network_totals()
     prev_time = time.monotonic()
     baseline = previous.get("baseline") if isinstance(previous.get("baseline"), dict) else {"pps": 1.0, "bps": 1.0}
+    metrics = previous.get("metrics") if isinstance(previous.get("metrics"), dict) else {"pps": 0.0, "bps": 0.0, "mbps": 0.0, "syn_recv": 0.0, "established": 0.0}
+    exposure = previous.get("origin") if isinstance(previous.get("origin"), dict) else {"state": "unknown", "public_bindings": [], "container": None}
+    layers = previous.get("layers") if isinstance(previous.get("layers"), dict) else {}
     previous_stage = str(previous.get("stage") or "starting")
+    stage = previous_stage
+    reasons = list(previous.get("stage_reasons") or ["starting"])
     controller = FirewallController(DATA_DIR)
-    append_event("agent", "HS Shield telemetry agent started in observe-only fail-open mode", "starting")
+    next_sample = 0.0
+    next_health = 0.0
+    last_status_write = 0.0
+    last_config_fingerprint = ""
+    append_event("agent", "HS Shield control loop started with low-CPU telemetry support", "starting")
 
     while True:
-        time.sleep(INTERVAL)
+        time.sleep(CONTROL_INTERVAL)
         config = ensure_config()
-        current_bytes, current_packets = network_totals()
-        current_time = time.monotonic()
-        elapsed = max(0.25, current_time - prev_time)
-        pps = max(0.0, (current_packets - prev_packets) / elapsed)
-        bps = max(0.0, ((current_bytes - prev_bytes) * 8.0) / elapsed)
-        prev_bytes, prev_packets, prev_time = current_bytes, current_packets, current_time
+        now = time.monotonic()
+        telemetry_enabled = bool(config.get("telemetry_enabled", True))
+        low_cpu_mode = bool(config.get("low_cpu_mode", True))
+        sample_interval = LOW_CPU_SAMPLE_INTERVAL if low_cpu_mode else NORMAL_SAMPLE_INTERVAL
+        health_interval = LOW_CPU_HEALTH_INTERVAL if low_cpu_mode else NORMAL_HEALTH_INTERVAL
+        config_fingerprint = json.dumps(
+            {
+                "enabled": bool(config.get("enabled", True)),
+                "telemetry_enabled": telemetry_enabled,
+                "low_cpu_mode": low_cpu_mode,
+                "mode": config.get("mode", "observe"),
+                "auto_stage": bool(config.get("auto_stage", True)),
+                "policy": config.get("policy", {}),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        config_changed = config_fingerprint != last_config_fingerprint
+        if config_changed:
+            last_config_fingerprint = config_fingerprint
 
-        metrics = {
-            "pps": round(pps, 2),
-            "bps": round(bps, 2),
-            "mbps": round(bps / 1_000_000.0, 2),
-            "syn_recv": float(count_ss("syn-recv")),
-            "established": float(count_ss("established")),
-        }
+        sampled = False
+        if telemetry_enabled and now >= next_sample:
+            current_bytes, current_packets = network_totals()
+            current_time = time.monotonic()
+            elapsed = max(0.25, current_time - prev_time)
+            pps = max(0.0, (current_packets - prev_packets) / elapsed)
+            bps = max(0.0, ((current_bytes - prev_bytes) * 8.0) / elapsed)
+            prev_bytes, prev_packets, prev_time = current_bytes, current_packets, current_time
+            metrics = {
+                "pps": round(pps, 2),
+                "bps": round(bps, 2),
+                "mbps": round(bps / 1_000_000.0, 2),
+                "syn_recv": float(count_ss("syn-recv")),
+                "established": float(count_ss("established")),
+            }
+            if previous_stage == "starting":
+                baseline = {"pps": max(1.0, pps), "bps": max(1.0, bps)}
+            alpha = 0.08
+            detected, _ = stage_for(config, metrics, baseline)
+            if detected not in {"attack", "elevated"}:
+                baseline["pps"] = max(1.0, (1.0 - alpha) * float(baseline.get("pps", 1.0)) + alpha * pps)
+                baseline["bps"] = max(1.0, (1.0 - alpha) * float(baseline.get("bps", 1.0)) + alpha * bps)
+            stage, reasons = stage_for(config, metrics, baseline)
+            next_sample = now + sample_interval
+            sampled = True
+        elif not telemetry_enabled:
+            prev_bytes, prev_packets = network_totals()
+            prev_time = time.monotonic()
+            metrics = {"pps": 0.0, "bps": 0.0, "mbps": 0.0, "syn_recv": 0.0, "established": 0.0}
+            stage, reasons = stage_for(config, metrics, baseline)
+            next_sample = now + sample_interval
+        elif config_changed:
+            stage, reasons = stage_for(config, metrics, baseline)
 
-        if previous_stage == "starting":
-            baseline = {"pps": max(1.0, pps), "bps": max(1.0, bps)}
-        # Learn only from non-attack traffic so a flood does not poison the baseline.
-        alpha = 0.08
-        detected, _ = stage_for(config, metrics, baseline)
-        if detected not in {"attack", "elevated"}:
-            baseline["pps"] = max(1.0, (1.0 - alpha) * float(baseline.get("pps", 1.0)) + alpha * pps)
-            baseline["bps"] = max(1.0, (1.0 - alpha) * float(baseline.get("bps", 1.0)) + alpha * bps)
+        if telemetry_enabled and now >= next_health:
+            exposure = pasarguard_exposure()
+            layers = local_layers()
+            next_health = now + health_interval
+        elif not telemetry_enabled:
+            layers = dict(layers)
+            layers["hs_detector"] = {"active": False, "role": "monitoring-paused"}
 
-        stage, reasons = stage_for(config, metrics, baseline)
-        exposure = pasarguard_exposure()
-        layers = local_layers()
-        ready_count = sum(1 for value in layers.values() if value.get("active"))
-        status = {
-            "version": 1,
-            "updated_at": now_iso(),
-            "enabled": bool(config.get("enabled", True)),
-            "mode": config.get("mode", "observe"),
-            "enforcement": controller.tick(config, stage),
-            "stage": stage,
-            "stage_reasons": reasons,
-            "metrics": metrics,
-            "baseline": {"pps": round(float(baseline["pps"]), 2), "bps": round(float(baseline["bps"]), 2)},
-            "origin": exposure,
-            "layers": layers,
-            "layers_ready": ready_count,
-            "layers_total": len(layers),
-        }
-        atomic_json(STATUS_FILE, status)
+        enforcement = controller.tick(config, stage)
+        heartbeat_interval = 10.0 if telemetry_enabled else 30.0
+        should_write = sampled or config_changed or (now - last_status_write) >= heartbeat_interval
+        if should_write:
+            ready_count = sum(1 for value in layers.values() if isinstance(value, dict) and value.get("active"))
+            status = {
+                "version": 2,
+                "updated_at": now_iso(),
+                "enabled": bool(config.get("enabled", True)),
+                "telemetry_enabled": telemetry_enabled,
+                "low_cpu_mode": low_cpu_mode,
+                "integration_guard_enabled": bool(config.get("integration_guard_enabled", True)),
+                "sample_interval": sample_interval if telemetry_enabled else None,
+                "mode": config.get("mode", "observe"),
+                "enforcement": enforcement,
+                "stage": stage,
+                "stage_reasons": reasons,
+                "metrics": metrics,
+                "baseline": {"pps": round(float(baseline.get("pps", 1.0)), 2), "bps": round(float(baseline.get("bps", 1.0)), 2)},
+                "origin": exposure,
+                "layers": layers,
+                "layers_ready": ready_count,
+                "layers_total": len(layers),
+            }
+            atomic_json(STATUS_FILE, status)
+            last_status_write = now
 
         if stage != previous_stage:
             append_event(

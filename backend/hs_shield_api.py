@@ -1,21 +1,20 @@
-"""Owner-only API for HS Shield telemetry and staged protection state."""
+"""Owner-only API for HS Shield telemetry, power controls and staged protection state."""
 from __future__ import annotations
 
-import json
 import fcntl
-import tempfile
-from contextlib import contextmanager
-from collections import deque
-from datetime import UTC, datetime
+import json
 import os
+import tempfile
+from collections import deque
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from typing import Literal
-from app.hs_firewall import validate_policy
 
+from app.hs_firewall import validate_policy
 from app.models.admin import AdminDetails
 from app.routers.authentication import get_current
 
@@ -27,6 +26,9 @@ EVENTS_FILE = DATA_DIR / "events.jsonl"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": True,
+    "telemetry_enabled": True,
+    "low_cpu_mode": True,
+    "integration_guard_enabled": True,
     "mode": "observe",
     "auto_stage": True,
     "safe_fail_open": True,
@@ -41,6 +43,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 class ShieldConfigBody(BaseModel):
     enabled: bool | None = None
+    telemetry_enabled: bool | None = None
+    low_cpu_mode: bool | None = None
+    integration_guard_enabled: bool | None = None
     auto_stage: bool | None = None
     mode: Literal["observe", "enforce"] | None = None
     policy: dict | None = None
@@ -80,7 +85,7 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
 @contextmanager
 def _lock():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with (DATA_DIR / '.config.lock').open('a') as handle:
+    with (DATA_DIR / ".config.lock").open("a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
@@ -108,16 +113,18 @@ def _events(limit: int) -> list[dict[str, Any]]:
 
 
 @router.get("/status")
-async def get_status(
-    _owner: AdminDetails = Depends(_require_owner),
-):
+async def get_status(_owner: AdminDetails = Depends(_require_owner)):
+    config = {**DEFAULT_CONFIG, **_read_json(CONFIG_FILE, DEFAULT_CONFIG)}
     status_value = _read_json(
         STATUS_FILE,
         {
-            "version": 1,
+            "version": 2,
             "stage": "starting",
             "mode": "observe",
             "enabled": True,
+            "telemetry_enabled": True,
+            "low_cpu_mode": True,
+            "integration_guard_enabled": True,
             "enforcement": {
                 "active": False,
                 "policy": "observe-only",
@@ -133,10 +140,15 @@ async def get_status(
             "updated_at": None,
         },
     )
-    config = _read_json(CONFIG_FILE, DEFAULT_CONFIG)
     updated = status_value.get("updated_at")
+    if not config.get("telemetry_enabled", True):
+        stale_after = 75
+    elif config.get("low_cpu_mode", True):
+        stale_after = 35
+    else:
+        stale_after = 20
     try:
-        stale = not updated or (datetime.now(UTC) - datetime.fromisoformat(updated)).total_seconds() > 15
+        stale = not updated or (datetime.now(UTC) - datetime.fromisoformat(updated)).total_seconds() > stale_after
     except (ValueError, TypeError):
         stale = True
     status_value["stale"] = stale
@@ -146,30 +158,24 @@ async def get_status(
 
 
 @router.get("/events")
-async def get_events(
-    limit: int = Query(default=50, ge=1, le=200),
-    _owner: AdminDetails = Depends(_require_owner),
-):
+async def get_events(limit: int = Query(default=50, ge=1, le=200), _owner: AdminDetails = Depends(_require_owner)):
     return {"events": _events(limit)}
 
 
 @router.put("/config")
-async def update_config(
-    body: ShieldConfigBody,
-    _owner: AdminDetails = Depends(_require_owner),
-):
+async def update_config(body: ShieldConfigBody, _owner: AdminDetails = Depends(_require_owner)):
     with _lock():
         config = {**DEFAULT_CONFIG, **_read_json(CONFIG_FILE, DEFAULT_CONFIG)}
         updates = body.model_dump(exclude_none=True)
         if body.policy is not None:
             try:
-                updates['policy'] = validate_policy(body.policy)
+                updates["policy"] = validate_policy(body.policy)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
         config.update(updates)
-        if body.mode == 'enforce' or body.policy is not None:
-            config.pop('confirmed_token', None)
-        config['safe_fail_open'] = True
+        if body.mode == "enforce" or body.policy is not None:
+            config.pop("confirmed_token", None)
+        config["safe_fail_open"] = True
         _write_json(CONFIG_FILE, config)
     return {"ok": True, "config": config, "requires_restart": False}
 
@@ -178,14 +184,15 @@ class ConfirmBody(BaseModel):
     token: str
 
 
-@router.post('/confirm')
+@router.post("/confirm")
 async def confirm_policy(body: ConfirmBody, _owner: AdminDetails = Depends(_require_owner)):
     import time
+
     with _lock():
-        pending = _read_json(STATUS_FILE, {}).get('enforcement', {}).get('pending') or {}
-        if pending.get('token') != body.token or pending.get('deadline', 0) <= time.time():
-            raise HTTPException(409, 'No matching pending firewall policy')
+        pending = _read_json(STATUS_FILE, {}).get("enforcement", {}).get("pending") or {}
+        if pending.get("token") != body.token or pending.get("deadline", 0) <= time.time():
+            raise HTTPException(409, "No matching pending firewall policy")
         config = _read_json(CONFIG_FILE, DEFAULT_CONFIG)
-        config['confirmed_token'] = body.token
+        config["confirmed_token"] = body.token
         _write_json(CONFIG_FILE, config)
-    return {'ok': True, 'message': 'Confirmation queued; check enforcement status'}
+    return {"ok": True, "message": "Confirmation queued; check enforcement status"}
