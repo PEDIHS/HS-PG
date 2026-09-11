@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const TAB_ID = 'hs-backup-settings-tab';
   const PANEL_ID = 'hs-backup-settings-panel';
   const QUERY_KEY = 'hs_backup';
@@ -12,6 +12,8 @@
   let observer = null;
   let featureTimer = null;
   let repairTimer = null;
+  let mirroredPath = false;
+  let originalPath = window.location.pathname || '/';
 
   const backupIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7V4h16v3"/><path d="M5 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><path d="M9 11h6M12 11v5"/><path d="m9.5 13.5 2.5 2.5 2.5-2.5"/></svg>`;
 
@@ -34,9 +36,43 @@
     return headers;
   }
 
+  function hashRoute() {
+    const rawHash = String(window.location.hash || '');
+    const raw = rawHash.startsWith('#') ? rawHash.slice(1) : rawHash;
+    const route = raw.startsWith('/') ? raw : raw ? `/${raw}` : '';
+    const queryAt = route.indexOf('?');
+    const path = (queryAt >= 0 ? route.slice(0, queryAt) : route) || window.location.pathname || '/';
+    const search = queryAt >= 0 ? route.slice(queryAt) : '';
+    return {path, search};
+  }
+
   function onSettingsPage() {
-    const path = window.location.pathname || '/';
-    return /(^|\/)settings(?:\/|$)/.test(path);
+    const path = hashRoute().path;
+    return path === '/settings' || path.startsWith('/settings/');
+  }
+
+  function mirrorHashPathForLegacyBackup() {
+    if (!onSettingsPage()) return false;
+    const routePath = hashRoute().path;
+    if (!mirroredPath) originalPath = window.location.pathname || '/';
+    if (window.location.pathname !== routePath) {
+      const url = new URL(window.location.href);
+      const next = `${routePath}${url.search}${url.hash}`;
+      window.history.replaceState(window.history.state, '', next);
+    }
+    mirroredPath = true;
+    return true;
+  }
+
+  function restoreOriginalPathIfNeeded() {
+    if (!mirroredPath) return;
+    if (onSettingsPage() && document.getElementById(PANEL_ID)) return;
+    const url = new URL(window.location.href);
+    const targetPath = originalPath || '/';
+    if (window.location.pathname !== targetPath) {
+      window.history.replaceState(window.history.state, '', `${targetPath}${url.search}${url.hash}`);
+    }
+    mirroredPath = false;
   }
 
   function tabBarCandidates() {
@@ -75,25 +111,27 @@
   }
 
   function requestBackupView() {
+    // PasarGuard uses createHashRouter. The original HS Backup 1.x code reads
+    // location.pathname/search, so mirror the active hash route only while the
+    // HS Backup view is active. React continues to use the unchanged hash.
+    mirrorHashPathForLegacyBackup();
+
     const url = new URL(window.location.href);
     url.searchParams.set(QUERY_KEY, '1');
     window.history.pushState({}, '', `${url.pathname}${url.search}${url.hash}`);
 
     const fire = () => window.dispatchEvent(new PopStateEvent('popstate'));
-    fire();
     window.HSBackup?.setEnabled?.(true);
+    fire();
     setTimeout(fire, 40);
     setTimeout(fire, 160);
 
-    // Last-resort recovery for an older HS Backup script that missed the SPA
-    // transition. Reload only after an explicit Backup-tab click.
     setTimeout(() => {
       if (!document.getElementById(PANEL_ID) && onSettingsPage()) {
-        const current = new URL(window.location.href);
-        if (current.searchParams.get(QUERY_KEY) !== '1') current.searchParams.set(QUERY_KEY, '1');
-        window.location.assign(`${current.pathname}${current.search}${current.hash}`);
+        window.HSBackup?.refresh?.();
+        fire();
       }
-    }, 700);
+    }, 450);
   }
 
   function ensureTab() {
@@ -132,6 +170,7 @@
     requestAnimationFrame(() => {
       queued = false;
       if (enabled) ensureTab();
+      if (!onSettingsPage()) restoreOriginalPathIfNeeded();
     });
   }
 
@@ -152,13 +191,18 @@
     }
   }
 
+  function handleRouteChange() {
+    if (!onSettingsPage()) restoreOriginalPathIfNeeded();
+    queueRepair();
+  }
+
   function start() {
     injectStyle();
     observer = new MutationObserver(queueRepair);
     observer.observe(document.documentElement, {childList: true, subtree: true});
 
     window.addEventListener('popstate', queueRepair);
-    window.addEventListener('hashchange', queueRepair);
+    window.addEventListener('hashchange', handleRouteChange);
     window.addEventListener('pageshow', queueRepair);
     window.addEventListener('focus', queueRepair);
     window.addEventListener('hs-plugin-feature-changed', event => {
@@ -171,6 +215,7 @@
     featureTimer = window.setInterval(refreshFeature, 10000);
     repairTimer = window.setInterval(() => {
       if (enabled && onSettingsPage()) ensureTab();
+      else restoreOriginalPathIfNeeded();
     }, 900);
     queueRepair();
   }
@@ -185,8 +230,11 @@
     diagnostics: () => ({
       version: VERSION,
       enabled,
-      path: window.location.pathname,
+      pathname: window.location.pathname,
+      hash: window.location.hash,
+      hashRoute: hashRoute(),
       settingsPage: onSettingsPage(),
+      mirroredPath,
       tabBarFound: !!findTabBar(),
       tabPresent: !!document.getElementById(TAB_ID),
       panelPresent: !!document.getElementById(PANEL_ID),
