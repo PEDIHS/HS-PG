@@ -35,43 +35,18 @@ else fail "curl or wget is required"; fi
 TMP="$(mktemp -d)"
 raw(){ printf 'https://raw.githubusercontent.com/%s/%s/%s?hs=%s' "$REPO" "$REF" "$1" "$(date +%s)"; }
 files=(
-  plugin/install-node-agent.sh
-  plugin/install-mtproxy.sh
-  backend/hs_firewall.py
-  backend/hs_services.py
-  backend/hs_services_api.py
-  backend/hs_services_agent.py
-  backend/hs_outbounds.py
-  backend/hs_fair_use.py
-  plugin/hs-services.js
-  systemd/hs-services-agent.service
-  backend/hs_plugin_runtime.py
-  backend/hs_plugin_api.py
-  backend/hs_admin_time.py
-  backend/hs_admin_time_job.py
-  backend/hs_backup_api.py
-  backend/hs_backup_agent.py
-  backend/hs_shield_api.py
-  backend/hs_shield_agent.py
-  plugin/patch_pasarguard.py
-  plugin/patch_backup_api.py
-  plugin/patch_shield_api.py
-  plugin/integrate-dashboard.sh
-  plugin/integrate-shield.sh
-  plugin/hs-plugin.js
-  plugin/hs-tab-fix.js
-  plugin/hs-node-pro.js
-  plugin/hs-backup.js
-  plugin/hs-backup-tab-watchdog.js
-  plugin/hs-admin-time.js
-  plugin/hs-shield.js
+  plugin/install-node-agent.sh plugin/install-mtproxy.sh
+  backend/hs_firewall.py backend/hs_services.py backend/hs_services_api.py backend/hs_services_agent.py backend/hs_services_agent_v2.py
+  backend/hs_outbounds.py backend/hs_fair_use.py backend/hs_fair_use_runtime.py backend/hs_fair_reconcile.py backend/hs_extensions_api.py
+  backend/hs_plugin_runtime.py backend/hs_plugin_api.py backend/hs_admin_time.py backend/hs_admin_time_job.py
+  backend/hs_backup_api.py backend/hs_backup_agent.py backend/hs_shield_api.py backend/hs_shield_agent.py
+  plugin/patch_pasarguard.py plugin/patch_backup_api.py plugin/patch_shield_api.py plugin/patch_extensions.py
+  plugin/integrate-dashboard.sh plugin/integrate-shield.sh plugin/integrate-extensions.sh
+  plugin/hs-plugin.js plugin/hs-tab-fix.js plugin/hs-node-pro.js plugin/hs-backup.js plugin/hs-backup-tab-watchdog.js plugin/hs-admin-time.js plugin/hs-shield.js
+  plugin/hs-services.js plugin/hs-native-extensions.js plugin/hs-firewall-charts.js
   cli/hs-pg
-  systemd/hs-pg-integrator.service
-  systemd/hs-pg-integrator.timer
-  systemd/hs-pg-integrator.path
-  systemd/hs-pg-backup-agent.service
-  systemd/hs-shield-agent.service
-  systemd/hs-shield-integrator.service
+  systemd/hs-services-agent.service systemd/hs-pg-integrator.service systemd/hs-pg-integrator.timer systemd/hs-pg-integrator.path
+  systemd/hs-pg-backup-agent.service systemd/hs-shield-agent.service systemd/hs-shield-integrator.service
 )
 for file in "${files[@]}"; do
   mkdir -p "$TMP/$(dirname "$file")"
@@ -79,72 +54,39 @@ for file in "${files[@]}"; do
 done
 
 python3 -m py_compile \
-  "$TMP/backend/hs_plugin_runtime.py" \
-  "$TMP/backend/hs_plugin_api.py" \
-  "$TMP/backend/hs_admin_time.py" \
-  "$TMP/backend/hs_admin_time_job.py" \
-  "$TMP/backend/hs_backup_api.py" \
-  "$TMP/backend/hs_backup_agent.py" \
-  "$TMP/backend/hs_shield_api.py" \
-  "$TMP/backend/hs_shield_agent.py" \
-  "$TMP/plugin/patch_pasarguard.py" \
-  "$TMP/plugin/patch_backup_api.py" \
-  "$TMP/plugin/patch_shield_api.py" \
-  "$TMP/backend/hs_firewall.py" \
-  "$TMP/backend/hs_services.py" \
-  "$TMP/backend/hs_services_api.py" \
-  "$TMP/backend/hs_services_agent.py" \
-  "$TMP/backend/hs_outbounds.py" \
-  "$TMP/backend/hs_fair_use.py" \
+  "$TMP/backend/hs_plugin_runtime.py" "$TMP/backend/hs_plugin_api.py" \
+  "$TMP/backend/hs_admin_time.py" "$TMP/backend/hs_admin_time_job.py" \
+  "$TMP/backend/hs_backup_api.py" "$TMP/backend/hs_backup_agent.py" \
+  "$TMP/backend/hs_shield_api.py" "$TMP/backend/hs_shield_agent.py" \
+  "$TMP/backend/hs_firewall.py" "$TMP/backend/hs_services.py" "$TMP/backend/hs_services_api.py" \
+  "$TMP/backend/hs_services_agent.py" "$TMP/backend/hs_services_agent_v2.py" \
+  "$TMP/backend/hs_outbounds.py" "$TMP/backend/hs_fair_use.py" "$TMP/backend/hs_fair_use_runtime.py" \
+  "$TMP/backend/hs_fair_reconcile.py" "$TMP/backend/hs_extensions_api.py" \
+  "$TMP/plugin/patch_pasarguard.py" "$TMP/plugin/patch_backup_api.py" "$TMP/plugin/patch_shield_api.py" "$TMP/plugin/patch_extensions.py" \
   || fail "Python validation failed"
 
 if command -v node >/dev/null 2>&1; then
-  node --check "$TMP/plugin/hs-services.js" || fail "hs-services.js validation failed"
-  node --check "$TMP/plugin/hs-plugin.js" || fail "hs-plugin.js validation failed"
-  node --check "$TMP/plugin/hs-tab-fix.js" || fail "hs-tab-fix.js validation failed"
-  node --check "$TMP/plugin/hs-node-pro.js" || fail "hs-node-pro.js validation failed"
-  node --check "$TMP/plugin/hs-backup.js" || fail "hs-backup.js validation failed"
-  node --check "$TMP/plugin/hs-backup-tab-watchdog.js" || fail "hs-backup-tab-watchdog.js validation failed"
-  node --check "$TMP/plugin/hs-admin-time.js" || fail "hs-admin-time.js validation failed"
-  node --check "$TMP/plugin/hs-shield.js" || fail "hs-shield.js validation failed"
+  for file in "$TMP"/plugin/*.js; do node --check "$file" || fail "$(basename "$file") validation failed"; done
 fi
-bash -n "$TMP/plugin/integrate-dashboard.sh" "$TMP/plugin/integrate-shield.sh" "$TMP/cli/hs-pg" || fail "Shell validation failed"
+bash -n "$TMP/plugin/integrate-dashboard.sh" "$TMP/plugin/integrate-shield.sh" "$TMP/plugin/integrate-extensions.sh" "$TMP/plugin/install-node-agent.sh" "$TMP/plugin/install-mtproxy.sh" "$TMP/cli/hs-pg" || fail "Shell validation failed"
 
 backup="$ROOT/backups/$(date +%Y%m%d-%H%M%S)"
-[[ -d "$ROOT" ]] && {
-  mkdir -p "$backup"
-  cp -a "$ROOT/backend" "$ROOT/plugin" "$ROOT/cli" "$ROOT/systemd" "$backup/" 2>/dev/null || true
-}
+[[ -d "$ROOT" ]] && { mkdir -p "$backup"; cp -a "$ROOT/backend" "$ROOT/plugin" "$ROOT/cli" "$ROOT/systemd" "$backup/" 2>/dev/null || true; }
 mkdir -p "$ROOT/backend" "$ROOT/plugin" "$ROOT/cli" "$ROOT/systemd" "$DATA"
+
 install -m 0755 "$TMP/plugin/install-node-agent.sh" "$ROOT/plugin/install-node-agent.sh"
 install -m 0755 "$TMP/plugin/install-mtproxy.sh" "$ROOT/plugin/install-mtproxy.sh"
-install -m 0644 "$TMP/backend/hs_firewall.py" "$ROOT/backend/hs_firewall.py"
-install -m 0644 "$TMP/backend/hs_services.py" "$ROOT/backend/hs_services.py"
-install -m 0644 "$TMP/backend/hs_services_api.py" "$ROOT/backend/hs_services_api.py"
-install -m 0644 "$TMP/backend/hs_services_agent.py" "$ROOT/backend/hs_services_agent.py"
-install -m 0644 "$TMP/backend/hs_outbounds.py" "$ROOT/backend/hs_outbounds.py"
-install -m 0644 "$TMP/backend/hs_fair_use.py" "$ROOT/backend/hs_fair_use.py"
-install -m 0644 "$TMP/plugin/hs-services.js" "$ROOT/plugin/hs-services.js"
-install -m 0644 "$TMP/backend/hs_plugin_runtime.py" "$ROOT/backend/hs_plugin_runtime.py"
-install -m 0644 "$TMP/backend/hs_plugin_api.py" "$ROOT/backend/hs_plugin_api.py"
-install -m 0644 "$TMP/backend/hs_admin_time.py" "$ROOT/backend/hs_admin_time.py"
-install -m 0644 "$TMP/backend/hs_admin_time_job.py" "$ROOT/backend/hs_admin_time_job.py"
-install -m 0644 "$TMP/backend/hs_backup_api.py" "$ROOT/backend/hs_backup_api.py"
+for file in hs_firewall.py hs_services.py hs_services_api.py hs_services_agent.py hs_services_agent_v2.py hs_outbounds.py hs_fair_use.py hs_fair_use_runtime.py hs_fair_reconcile.py hs_extensions_api.py hs_plugin_runtime.py hs_plugin_api.py hs_admin_time.py hs_admin_time_job.py hs_backup_api.py hs_shield_api.py; do
+  install -m 0644 "$TMP/backend/$file" "$ROOT/backend/$file"
+done
 install -m 0755 "$TMP/backend/hs_backup_agent.py" "$ROOT/backend/hs_backup_agent.py"
-install -m 0644 "$TMP/backend/hs_shield_api.py" "$ROOT/backend/hs_shield_api.py"
 install -m 0755 "$TMP/backend/hs_shield_agent.py" "$ROOT/backend/hs_shield_agent.py"
-install -m 0755 "$TMP/plugin/patch_pasarguard.py" "$ROOT/plugin/patch_pasarguard.py"
-install -m 0755 "$TMP/plugin/patch_backup_api.py" "$ROOT/plugin/patch_backup_api.py"
-install -m 0755 "$TMP/plugin/patch_shield_api.py" "$ROOT/plugin/patch_shield_api.py"
-install -m 0755 "$TMP/plugin/integrate-dashboard.sh" "$ROOT/plugin/integrate-dashboard.sh"
-install -m 0755 "$TMP/plugin/integrate-shield.sh" "$ROOT/plugin/integrate-shield.sh"
-install -m 0644 "$TMP/plugin/hs-plugin.js" "$ROOT/plugin/hs-plugin.js"
-install -m 0644 "$TMP/plugin/hs-tab-fix.js" "$ROOT/plugin/hs-tab-fix.js"
-install -m 0644 "$TMP/plugin/hs-node-pro.js" "$ROOT/plugin/hs-node-pro.js"
-install -m 0644 "$TMP/plugin/hs-backup.js" "$ROOT/plugin/hs-backup.js"
-install -m 0644 "$TMP/plugin/hs-backup-tab-watchdog.js" "$ROOT/plugin/hs-backup-tab-watchdog.js"
-install -m 0644 "$TMP/plugin/hs-admin-time.js" "$ROOT/plugin/hs-admin-time.js"
-install -m 0644 "$TMP/plugin/hs-shield.js" "$ROOT/plugin/hs-shield.js"
+for file in patch_pasarguard.py patch_backup_api.py patch_shield_api.py patch_extensions.py integrate-dashboard.sh integrate-shield.sh integrate-extensions.sh; do
+  install -m 0755 "$TMP/plugin/$file" "$ROOT/plugin/$file"
+done
+for file in hs-plugin.js hs-tab-fix.js hs-node-pro.js hs-backup.js hs-backup-tab-watchdog.js hs-admin-time.js hs-shield.js hs-services.js hs-native-extensions.js hs-firewall-charts.js; do
+  install -m 0644 "$TMP/plugin/$file" "$ROOT/plugin/$file"
+done
 rm -f "$ROOT/plugin/hs-node-ip-fix.js"
 install -m 0755 "$TMP/cli/hs-pg" "$ROOT/cli/hs-pg"
 install -m 0755 "$TMP/cli/hs-pg" /usr/local/bin/hs-pg
@@ -167,10 +109,8 @@ JSON
   chmod 600 "$DATA/state.json"
 fi
 
-mkdir -p "$DATA/services" /var/lib/hs-pg-agent
-chmod 700 "$DATA/services" /var/lib/hs-pg-agent
-mkdir -p "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" "$DATA/shield"
-chmod 700 "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" "$DATA/shield" || true
+mkdir -p "$DATA/services" /var/lib/hs-pg-agent "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" "$DATA/shield"
+chmod 700 "$DATA/services" /var/lib/hs-pg-agent "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" "$DATA/shield" || true
 
 if command -v systemctl >/dev/null 2>&1; then
   for unit in hs-pg-integrator.service hs-pg-integrator.timer hs-pg-integrator.path hs-pg-backup-agent.service hs-shield-agent.service hs-shield-integrator.service hs-services-agent.service; do
@@ -194,15 +134,17 @@ fi
 
 log "$MODE files installed in $ROOT"
 "$ROOT/plugin/integrate-dashboard.sh" || fail "PasarGuard integration failed safely; no service was restarted"
+"$ROOT/plugin/integrate-extensions.sh" || fail "HS native extension integration failed safely"
 "$ROOT/plugin/integrate-shield.sh" || fail "HS Shield integration failed safely; panel networking was not changed"
 if [[ $RESTART -eq 1 ]]; then
   log "restarting PasarGuard as explicitly requested"
   /usr/local/bin/hs-pg restart
 else
   log "no PasarGuard service restart performed"
-  log "host persistence guard is active and will re-apply HS Plugin after PasarGuard update/restart/recreate"
+  log "host persistence guard will re-apply HS Plugin, Fair Use and native Outbound UI after PasarGuard update/restart/recreate"
   log "HS Shield defaults to observe mode. Enforce requires nftables, preflight and a 45-second confirmation."
-  log "Web Backup, Admin Time and newly patched backend routes may require one PasarGuard restart after first install/update"
+  log "Fair Use uses per-user Xray marks plus nftables on enrolled nodes; install/update the HS node agent on nodes that should enforce rate caps."
+  log "newly patched backend routes require one PasarGuard restart after first install/update"
   log "run 'sudo hs-pg restart' only when backend hooks need activation"
 fi
 log "future updates: sudo hs-pg update"
