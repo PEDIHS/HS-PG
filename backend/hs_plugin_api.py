@@ -1,4 +1,4 @@
-"""Owner-only API for HS Plugin."""
+"""Owner API and authenticated self-service read endpoints for HS Plugin."""
 from __future__ import annotations
 
 import fcntl
@@ -94,9 +94,13 @@ def _save_state(value: dict) -> None:
     os.replace(tmp, STATE_FILE)
 
 
-def _require_owner(current_admin: AdminDetails | None = Depends(get_current)) -> AdminDetails:
+def _require_authenticated(current_admin: AdminDetails | None = Depends(get_current)) -> AdminDetails:
     if current_admin is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    return current_admin
+
+
+def _require_owner(current_admin: AdminDetails = Depends(_require_authenticated)) -> AdminDetails:
     if not current_admin.role or not current_admin.role.is_owner:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="HS Plugin settings are owner-only")
     return current_admin
@@ -330,6 +334,18 @@ async def set_feature(
     }
 
 
+@router.get("/admin-time/me")
+async def get_my_admin_time(
+    db: AsyncSession = Depends(get_db),
+    current_admin: AdminDetails = Depends(_require_authenticated),
+):
+    """Return only the caller's Admin Time state; safe for non-owner admins."""
+    try:
+        return await get_admin_time_info(db, current_admin.username)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found") from exc
+
+
 @router.get("/admin-time/by-username/{username}")
 async def get_admin_time(
     username: str,
@@ -351,6 +367,35 @@ async def set_admin_time(
 ):
     try:
         return await set_admin_time_days(db, username, body.days)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/admin-time/by-username/{username}/reset")
+async def reset_admin_time(
+    username: str,
+    db: AsyncSession = Depends(get_db),
+    _owner: AdminDetails = Depends(_require_owner),
+):
+    """Restart the configured Admin Time duration from now.
+
+    This mirrors PasarGuard's reset-data UX: the plan length is preserved while
+    the current countdown is reset. A suspended admin is resumed first by the
+    existing set_admin_time_days implementation, so paused user clocks remain
+    lossless.
+    """
+    try:
+        info = await get_admin_time_info(db, username)
+        duration_days = info.get("duration_days")
+        if not info.get("configured") or not duration_days:
+            raise ValueError("Admin Time is unlimited; set a duration before resetting it")
+        return await set_admin_time_days(db, username, int(duration_days))
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found") from exc
     except PermissionError as exc:
