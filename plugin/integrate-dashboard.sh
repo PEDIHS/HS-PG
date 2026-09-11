@@ -18,6 +18,7 @@ API_ADDON="${HS_ROOT}/backend/hs_plugin_api.py"
 BACKUP_API="${HS_ROOT}/backend/hs_backup_api.py"
 RUNTIME="${HS_ROOT}/backend/hs_plugin_runtime.py"
 ADMIN_TIME_RUNTIME="${HS_ROOT}/backend/hs_admin_time.py"
+ADMIN_TIME_JOB="${HS_ROOT}/backend/hs_admin_time_job.py"
 LOADER_MARKER="hs-plugin-loader"
 TAB_FIX_MARKER="hs-plugin-tab-fix-loader"
 NODE_PRO_MARKER="hs-plugin-node-pro-loader"
@@ -30,7 +31,7 @@ log(){ printf '\033[1;33m[HS Plugin]\033[0m %s\n' "$*"; }
 warn(){ printf '\033[1;31m[HS Plugin]\033[0m %s\n' "$*" >&2; }
 sha12(){ sha256sum "$1" | awk '{print substr($1,1,12)}'; }
 
-for f in "$PATCHER" "$BACKUP_PATCHER" "$ADMIN_JS" "$TAB_FIX_JS" "$NODE_PRO_JS" "$BACKUP_JS" "$BACKUP_WATCH_JS" "$ADMIN_TIME_JS" "$API_ADDON" "$BACKUP_API" "$RUNTIME" "$ADMIN_TIME_RUNTIME"; do
+for f in "$PATCHER" "$BACKUP_PATCHER" "$ADMIN_JS" "$TAB_FIX_JS" "$NODE_PRO_JS" "$BACKUP_JS" "$BACKUP_WATCH_JS" "$ADMIN_TIME_JS" "$API_ADDON" "$BACKUP_API" "$RUNTIME" "$ADMIN_TIME_RUNTIME" "$ADMIN_TIME_JOB"; do
   [[ -s "$f" ]] || { warn "missing $f"; exit 1; }
 done
 mkdir -p "$DATA_DIR"
@@ -127,12 +128,18 @@ find_host_build(){
   done
 }
 
+install_admin_time_host(){
+  local app="$1"
+  install -m 0644 "$ADMIN_TIME_RUNTIME" "$app/hs_admin_time.py"
+  install -m 0644 "$ADMIN_TIME_JOB" "$app/jobs/hs_admin_time.py"
+  python3 -m py_compile "$app/hs_admin_time.py" "$app/jobs/hs_admin_time.py"
+}
+
 integrate_host(){
   local app build
   app="$(find_host_app || true)"
   if [[ -n "$app" ]]; then
-    install -m 0644 "$ADMIN_TIME_RUNTIME" "$app/hs_admin_time.py"
-    python3 -m py_compile "$app/hs_admin_time.py"
+    install_admin_time_host "$app"
     python3 "$PATCHER" --app-root "$app" --api-addon "$API_ADDON" --runtime "$RUNTIME"
     python3 "$BACKUP_PATCHER" --app-root "$app" --backup-api "$BACKUP_API"
     log "backend source hooks healthy at $app"
@@ -182,7 +189,8 @@ integrate_container(){
     docker cp "$BACKUP_API" "$cid:/tmp/hs_backup_api.py" >/dev/null
     docker cp "$RUNTIME" "$cid:/tmp/hs_plugin_runtime.py" >/dev/null
     docker cp "$ADMIN_TIME_RUNTIME" "$cid:$app/hs_admin_time.py" >/dev/null
-    docker exec "$cid" python3 -m py_compile "$app/hs_admin_time.py" >/dev/null
+    docker cp "$ADMIN_TIME_JOB" "$cid:$app/jobs/hs_admin_time.py" >/dev/null
+    docker exec "$cid" python3 -m py_compile "$app/hs_admin_time.py" "$app/jobs/hs_admin_time.py" >/dev/null
     docker exec "$cid" python3 /tmp/hs-pg-patch.py --app-root "$app" --api-addon /tmp/hs_plugin_api.py --runtime /tmp/hs_plugin_runtime.py >/dev/null
     docker exec "$cid" python3 /tmp/hs-pg-backup-patch.py --app-root "$app" --backup-api /tmp/hs_backup_api.py >/dev/null
     log "backend source hooks healthy in ${cid:0:12} ($app)"
