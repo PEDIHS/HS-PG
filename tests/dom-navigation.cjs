@@ -21,7 +21,7 @@ const fs=require('fs');const path=require('path');const assert=require('node:ass
  // The four controls must mutate real config, not just their visual state.
  assert.equal(q('[data-hs-power=firewall]').getAttribute('aria-checked'),'false');
  await click('[data-hs-power=firewall]');assert.equal(shield.config.mode,'enforce');assert.equal(shield.config.enabled,true);assert.equal(q('[data-hs-power=firewall]').getAttribute('aria-checked'),'true');
- shield.status.enforcement={active:true,pending:{token:'confirm-token',deadline:Date.now()/1000+45},error:null};await w.HSShieldDebug.refresh();await tick();q('[data-hs-confirm]');await click('[data-hs-confirm]');assert.equal(shield.status.enforcement.active,true);
+ shield.status.enforcement={active:true,pending:{token:'confirm-token',deadline:Date.now()/1000+45},error:null};await w.HSShieldDebug.refresh();await tick();q('[data-hs-confirm]');await click('[data-hs-confirm]');assert.equal(shield.status.enforcement.active,true);await new Promise(r=>setTimeout(r,1300));
  await click('[data-hs-power=telemetry_enabled]');assert.equal(shield.config.telemetry_enabled,false);assert.equal(q('[data-hs-power=telemetry_enabled]').getAttribute('aria-checked'),'false');
  await click('[data-hs-power=low_cpu_mode]');assert.equal(shield.config.low_cpu_mode,false);assert.equal(q('[data-hs-power=low_cpu_mode]').getAttribute('aria-checked'),'false');
  await click('[data-hs-power=integration_guard_enabled]');assert.equal(shield.config.integration_guard_enabled,false);assert.equal(q('[data-hs-power=integration_guard_enabled]').getAttribute('aria-checked'),'false');
