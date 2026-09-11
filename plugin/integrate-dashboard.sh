@@ -13,34 +13,38 @@ TAB_FIX_JS="${HS_ROOT}/plugin/hs-tab-fix.js"
 NODE_PRO_JS="${HS_ROOT}/plugin/hs-node-pro.js"
 BACKUP_JS="${HS_ROOT}/plugin/hs-backup.js"
 BACKUP_WATCH_JS="${HS_ROOT}/plugin/hs-backup-tab-watchdog.js"
+ADMIN_TIME_JS="${HS_ROOT}/plugin/hs-admin-time.js"
 API_ADDON="${HS_ROOT}/backend/hs_plugin_api.py"
 BACKUP_API="${HS_ROOT}/backend/hs_backup_api.py"
 RUNTIME="${HS_ROOT}/backend/hs_plugin_runtime.py"
+ADMIN_TIME_RUNTIME="${HS_ROOT}/backend/hs_admin_time.py"
 LOADER_MARKER="hs-plugin-loader"
 TAB_FIX_MARKER="hs-plugin-tab-fix-loader"
 NODE_PRO_MARKER="hs-plugin-node-pro-loader"
 BACKUP_MARKER="hs-plugin-backup-loader"
 BACKUP_WATCH_MARKER="hs-plugin-backup-tab-watchdog-loader"
+ADMIN_TIME_MARKER="hs-plugin-admin-time-loader"
 LEGACY_NODE_IP_MARKER="hs-plugin-node-ip-fix-loader"
 
 log(){ printf '\033[1;33m[HS Plugin]\033[0m %s\n' "$*"; }
 warn(){ printf '\033[1;31m[HS Plugin]\033[0m %s\n' "$*" >&2; }
 sha12(){ sha256sum "$1" | awk '{print substr($1,1,12)}'; }
 
-for f in "$PATCHER" "$BACKUP_PATCHER" "$ADMIN_JS" "$TAB_FIX_JS" "$NODE_PRO_JS" "$BACKUP_JS" "$BACKUP_WATCH_JS" "$API_ADDON" "$BACKUP_API" "$RUNTIME"; do
+for f in "$PATCHER" "$BACKUP_PATCHER" "$ADMIN_JS" "$TAB_FIX_JS" "$NODE_PRO_JS" "$BACKUP_JS" "$BACKUP_WATCH_JS" "$ADMIN_TIME_JS" "$API_ADDON" "$BACKUP_API" "$RUNTIME" "$ADMIN_TIME_RUNTIME"; do
   [[ -s "$f" ]] || { warn "missing $f"; exit 1; }
 done
 mkdir -p "$DATA_DIR"
 
 inject_loaders_host(){
-  local html="$1" admin_version tab_version node_version backup_version backup_watch_version
+  local html="$1" admin_version tab_version node_version backup_version backup_watch_version admin_time_version
   [[ -f "$html" ]] || return 0
   admin_version="$(sha12 "$ADMIN_JS")"
   tab_version="$(sha12 "$TAB_FIX_JS")"
   node_version="$(sha12 "$NODE_PRO_JS")"
   backup_version="$(sha12 "$BACKUP_JS")"
   backup_watch_version="$(sha12 "$BACKUP_WATCH_JS")"
-  python3 - "$html" "$LOADER_MARKER" "$admin_version" "$TAB_FIX_MARKER" "$tab_version" "$NODE_PRO_MARKER" "$node_version" "$BACKUP_MARKER" "$backup_version" "$BACKUP_WATCH_MARKER" "$backup_watch_version" "$LEGACY_NODE_IP_MARKER" <<'PY'
+  admin_time_version="$(sha12 "$ADMIN_TIME_JS")"
+  python3 - "$html" "$LOADER_MARKER" "$admin_version" "$TAB_FIX_MARKER" "$tab_version" "$NODE_PRO_MARKER" "$node_version" "$BACKUP_MARKER" "$backup_version" "$BACKUP_WATCH_MARKER" "$backup_watch_version" "$ADMIN_TIME_MARKER" "$admin_time_version" "$LEGACY_NODE_IP_MARKER" <<'PY'
 from pathlib import Path
 import re, sys
 p=Path(sys.argv[1]); old=p.read_text(encoding='utf-8')
@@ -50,8 +54,9 @@ entries=[
     (sys.argv[6], f'/statics/hs-node-pro.js?v={sys.argv[7]}'),
     (sys.argv[8], f'/statics/hs-backup.js?v={sys.argv[9]}'),
     (sys.argv[10], f'/statics/hs-backup-tab-watchdog.js?v={sys.argv[11]}'),
+    (sys.argv[12], f'/statics/hs-admin-time.js?v={sys.argv[13]}'),
 ]
-legacy=[sys.argv[12]]
+legacy=[sys.argv[14]]
 new=old
 for marker, src in entries:
     tag=f'<script id="{marker}" src="{src}" defer></script>'
@@ -70,14 +75,15 @@ PY
 }
 
 inject_loaders_container(){
-  local cid="$1" html="$2" admin_version tab_version node_version backup_version backup_watch_version
+  local cid="$1" html="$2" admin_version tab_version node_version backup_version backup_watch_version admin_time_version
   admin_version="$(sha12 "$ADMIN_JS")"
   tab_version="$(sha12 "$TAB_FIX_JS")"
   node_version="$(sha12 "$NODE_PRO_JS")"
   backup_version="$(sha12 "$BACKUP_JS")"
   backup_watch_version="$(sha12 "$BACKUP_WATCH_JS")"
+  admin_time_version="$(sha12 "$ADMIN_TIME_JS")"
   docker exec "$cid" test -f "$html" >/dev/null 2>&1 || return 0
-  docker exec -i "$cid" python3 - "$html" "$LOADER_MARKER" "$admin_version" "$TAB_FIX_MARKER" "$tab_version" "$NODE_PRO_MARKER" "$node_version" "$BACKUP_MARKER" "$backup_version" "$BACKUP_WATCH_MARKER" "$backup_watch_version" "$LEGACY_NODE_IP_MARKER" <<'PY'
+  docker exec -i "$cid" python3 - "$html" "$LOADER_MARKER" "$admin_version" "$TAB_FIX_MARKER" "$tab_version" "$NODE_PRO_MARKER" "$node_version" "$BACKUP_MARKER" "$backup_version" "$BACKUP_WATCH_MARKER" "$backup_watch_version" "$ADMIN_TIME_MARKER" "$admin_time_version" "$LEGACY_NODE_IP_MARKER" <<'PY'
 from pathlib import Path
 import re, sys
 p=Path(sys.argv[1]); old=p.read_text(encoding='utf-8')
@@ -87,8 +93,9 @@ entries=[
     (sys.argv[6], f'/statics/hs-node-pro.js?v={sys.argv[7]}'),
     (sys.argv[8], f'/statics/hs-backup.js?v={sys.argv[9]}'),
     (sys.argv[10], f'/statics/hs-backup-tab-watchdog.js?v={sys.argv[11]}'),
+    (sys.argv[12], f'/statics/hs-admin-time.js?v={sys.argv[13]}'),
 ]
-legacy=[sys.argv[12]]
+legacy=[sys.argv[14]]
 new=old
 for marker, src in entries:
     tag=f'<script id="{marker}" src="{src}" defer></script>'
@@ -124,6 +131,8 @@ integrate_host(){
   local app build
   app="$(find_host_app || true)"
   if [[ -n "$app" ]]; then
+    install -m 0644 "$ADMIN_TIME_RUNTIME" "$app/hs_admin_time.py"
+    python3 -m py_compile "$app/hs_admin_time.py"
     python3 "$PATCHER" --app-root "$app" --api-addon "$API_ADDON" --runtime "$RUNTIME"
     python3 "$BACKUP_PATCHER" --app-root "$app" --backup-api "$BACKUP_API"
     log "backend source hooks healthy at $app"
@@ -136,6 +145,7 @@ integrate_host(){
     install -m 0644 "$NODE_PRO_JS" "$build/statics/hs-node-pro.js"
     install -m 0644 "$BACKUP_JS" "$build/statics/hs-backup.js"
     install -m 0644 "$BACKUP_WATCH_JS" "$build/statics/hs-backup-tab-watchdog.js"
+    install -m 0644 "$ADMIN_TIME_JS" "$build/statics/hs-admin-time.js"
     rm -f "$build/statics/hs-node-ip-fix.js"
     inject_loaders_host "$build/index.html"
     inject_loaders_host "$build/404.html"
@@ -171,6 +181,8 @@ integrate_container(){
     docker cp "$API_ADDON" "$cid:/tmp/hs_plugin_api.py" >/dev/null
     docker cp "$BACKUP_API" "$cid:/tmp/hs_backup_api.py" >/dev/null
     docker cp "$RUNTIME" "$cid:/tmp/hs_plugin_runtime.py" >/dev/null
+    docker cp "$ADMIN_TIME_RUNTIME" "$cid:$app/hs_admin_time.py" >/dev/null
+    docker exec "$cid" python3 -m py_compile "$app/hs_admin_time.py" >/dev/null
     docker exec "$cid" python3 /tmp/hs-pg-patch.py --app-root "$app" --api-addon /tmp/hs_plugin_api.py --runtime /tmp/hs_plugin_runtime.py >/dev/null
     docker exec "$cid" python3 /tmp/hs-pg-backup-patch.py --app-root "$app" --backup-api /tmp/hs_backup_api.py >/dev/null
     log "backend source hooks healthy in ${cid:0:12} ($app)"
@@ -184,6 +196,7 @@ integrate_container(){
     docker cp "$NODE_PRO_JS" "$cid:$build/statics/hs-node-pro.js" >/dev/null
     docker cp "$BACKUP_JS" "$cid:$build/statics/hs-backup.js" >/dev/null
     docker cp "$BACKUP_WATCH_JS" "$cid:$build/statics/hs-backup-tab-watchdog.js" >/dev/null
+    docker cp "$ADMIN_TIME_JS" "$cid:$build/statics/hs-admin-time.js" >/dev/null
     docker exec "$cid" rm -f "$build/statics/hs-node-ip-fix.js" >/dev/null 2>&1 || true
     inject_loaders_container "$cid" "$build/index.html"
     inject_loaders_container "$cid" "$build/404.html"
@@ -205,7 +218,7 @@ main(){
     warn "no active PasarGuard installation found"
     exit 2
   fi
-  log "integration complete; HS tab, Node PRO, Web Backup, Backup tab watchdog and backend hooks are installed"
+  log "integration complete; HS tab, Node PRO, Web Backup, Admin Time Limit and backend hooks are installed"
 }
 
 main "$@"
