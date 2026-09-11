@@ -156,12 +156,24 @@ integrate_host(){
     rm -f "$build/statics/hs-node-ip-fix.js"
     inject_loaders_host "$build/index.html"
     inject_loaders_host "$build/404.html"
-    log "dashboard loaders healthy at $build"
+    log "dashboard loaders healthy at $build (hs-plugin=$(sha12 "$ADMIN_JS"))"
   fi
 }
 
-compose_available(){ command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; }
-container_ids(){ if compose_available; then docker compose -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT" ps -q 2>/dev/null || true; fi; }
+# Do not depend on a Compose project name. PasarGuard updates/recreates can
+# change labels/project names while the running panel image remains authoritative.
+container_ids(){
+  command -v docker >/dev/null 2>&1 || return 0
+  local cid image seen=""
+  while read -r cid; do
+    [[ -n "$cid" ]] || continue
+    image="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null || true)"
+    [[ "$image" == *pasarguard/panel* ]] || continue
+    case " $seen " in *" $cid "*) continue ;; esac
+    seen="$seen $cid"
+    printf '%s\n' "$cid"
+  done < <(docker ps -q 2>/dev/null || true)
+}
 
 find_container_app(){
   local cid="$1" f
@@ -176,7 +188,7 @@ find_container_build(){
 }
 
 integrate_container(){
-  local cid="$1" app build image
+  local cid="$1" app build image expected actual
   [[ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || true)" == true ]] || return 0
   image="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null || true)"
   [[ "$image" == *pasarguard/panel* ]] || return 0
@@ -208,14 +220,28 @@ integrate_container(){
     docker exec "$cid" rm -f "$build/statics/hs-node-ip-fix.js" >/dev/null 2>&1 || true
     inject_loaders_container "$cid" "$build/index.html"
     inject_loaders_container "$cid" "$build/404.html"
-    log "dashboard loaders healthy in ${cid:0:12} ($build)"
+
+    expected="$(sha12 "$ADMIN_JS")"
+    actual="$(docker exec "$cid" sha256sum "$build/statics/hs-plugin.js" 2>/dev/null | awk '{print substr($1,1,12)}' || true)"
+    if [[ "$actual" != "$expected" ]]; then
+      warn "dashboard verification failed in ${cid:0:12}: expected hs-plugin=$expected got=${actual:-missing}"
+      return 3
+    fi
+    if ! docker exec "$cid" grep -q "hs-plugin.js?v=${expected}" "$build/index.html" 2>/dev/null; then
+      warn "loader verification failed in ${cid:0:12}: index.html is not pointing at hs-plugin=$expected"
+      return 4
+    fi
+    log "dashboard loaders verified in ${cid:0:12} ($build, hs-plugin=$expected)"
+  else
+    warn "dashboard build not found in ${cid:0:12}"
+    return 5
   fi
 }
 
 main(){
   integrate_host || true
   local ids cid count=0
-  ids="$(container_ids)"
+  ids="$(container_ids || true)"
   while read -r cid; do
     [[ -n "$cid" ]] || continue
     integrate_container "$cid"
@@ -223,10 +249,10 @@ main(){
   done <<<"$ids"
 
   if [[ $count -eq 0 && -z "$(find_host_app || true)" ]]; then
-    warn "no active PasarGuard installation found"
+    warn "no active PasarGuard panel container found"
     exit 2
   fi
-  log "integration complete; HS tab, Node PRO, Web Backup, Admin Time Limit and backend hooks are installed"
+  log "integration complete; active PasarGuard dashboard has the current HS Plugin assets"
 }
 
 main "$@"
