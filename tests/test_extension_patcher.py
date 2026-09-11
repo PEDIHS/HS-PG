@@ -22,9 +22,11 @@ def test_extension_patcher_registers_routes_subscription_and_usage_hook(tmp_path
         "import time\n"
         "from app.operation.admin_sync import enforce_admin_limits_now\n"
         "async def _record_user_usages_impl():\n"
-        "    job_duration = time.time()\n"
+        "    job_start_time = time.time()\n"
+        "    job_duration = time.time() - job_start_time\n"
         "async def _record_node_usages_impl():\n"
-        "    job_duration = time.time()\n"
+        "    job_start_time = time.time()\n"
+        "    job_duration = time.time() - job_start_time\n"
     )
 
     sources = {}
