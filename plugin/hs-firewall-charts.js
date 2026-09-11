@@ -173,8 +173,21 @@
     if(attempt<12)setTimeout(()=>attachAfterActivation(attempt+1),25);
   }
 
-  function tick(){style();watchRoot();push();draw();controls();}
+  function hookShieldOpen(){
+    const api=window.HSShieldDebug;
+    if(!api||api.__hsChartsOpenHooked)return;
+    const originalOpen=api.open.bind(api);
+    api.open=async(...args)=>{
+      const result=await originalOpen(...args);
+      attachAfterActivation();
+      return result;
+    };
+    Object.defineProperty(api,'__hsChartsOpenHooked',{value:true,configurable:true});
+  }
+
+  function tick(){style();hookShieldOpen();watchRoot();push();draw();controls();}
   function boot(){
+    hookShieldOpen();
     tick();
     timer=setInterval(()=>{if(!document.hidden)tick();},5000);
     window.addEventListener('hs-shield:activate',()=>attachAfterActivation());
