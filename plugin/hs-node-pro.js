@@ -1,10 +1,12 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.0';
+  const VERSION = '0.5.0';
   const STYLE_ID = 'hs-node-pro-style';
   const BLOCK_CLASS = 'hs-node-pro';
   const CARD_CLASS = 'hs-node-pro-card';
+  const IP_CLASS = 'hs-node-ip-value';
+  const IP_BUTTON_CLASS = 'hs-node-ip-toggle';
   const rawFetch = window.fetch.bind(window);
 
   let enabled = false;
@@ -14,64 +16,210 @@
   let nodesCache = [];
   let statsCache = {};
   let busy = false;
+  let renderQueued = false;
+
   const history = new Map();
+  const revealedIps = new Set();
 
   const css = `
     .${CARD_CLASS}{
-      grid-column:1/-1!important;
-      border-radius:24px!important;
-      border:1px solid rgba(255,255,255,.065)!important;
-      background:linear-gradient(145deg,rgba(22,31,42,.96),rgba(13,19,26,.98))!important;
-      box-shadow:0 20px 58px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.025)!important;
+      min-width:0!important;
       overflow:hidden!important;
-      transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease!important;
+      transition:border-color .2s ease,box-shadow .2s ease!important;
     }
-    .${CARD_CLASS}:hover{border-color:rgba(255,255,255,.095)!important;box-shadow:0 24px 64px rgba(0,0,0,.34),inset 0 1px rgba(255,255,255,.03)!important}
-    .${CARD_CLASS}>div.p-3{padding:22px!important}
-    .${BLOCK_CLASS}{margin-top:1rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,.065);pointer-events:none;color:#f5f7fa}
-    .${BLOCK_CLASS}-top{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
-    .${BLOCK_CLASS}-bottom{display:grid;grid-template-columns:1.2fr 1.2fr .8fr;gap:14px}
-    .${BLOCK_CLASS}-box{position:relative;min-width:0;min-height:132px;padding:18px;border-radius:18px;border:1px solid rgba(255,255,255,.065);background:linear-gradient(145deg,rgba(255,255,255,.025),rgba(255,255,255,.01));overflow:hidden;box-shadow:inset 0 1px rgba(255,255,255,.015)}
-    .${BLOCK_CLASS}-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-    .${BLOCK_CLASS}-title{display:flex;align-items:center;gap:8px;color:#e6edf5;font-size:13px;font-weight:650}
-    .${BLOCK_CLASS}-title svg{color:#9eacc0;flex:none}
-    .${BLOCK_CLASS}-value{text-align:right;color:#f5f7fa;font-size:17px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums;white-space:nowrap}
-    .${BLOCK_CLASS}-sub{display:block;margin-top:4px;color:#8996aa;font-size:11px;font-weight:500}
-    .${BLOCK_CLASS}-spark{position:absolute;left:18px;right:18px;bottom:14px;height:48px;opacity:.95}
-    .${BLOCK_CLASS}-spark svg{display:block;width:100%;height:100%;overflow:visible}
-    .${BLOCK_CLASS}-spark path{fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
-    .${BLOCK_CLASS}-spark.green path{stroke:#38e88c;filter:drop-shadow(0 0 5px rgba(56,232,140,.32))}
-    .${BLOCK_CLASS}-spark.purple path{stroke:#9c86ff;filter:drop-shadow(0 0 5px rgba(156,134,255,.30))}
-    .${BLOCK_CLASS}-spark.blue path{stroke:#43a7ff;filter:drop-shadow(0 0 5px rgba(67,167,255,.30))}
-    .${BLOCK_CLASS}-box-title{display:flex;align-items:center;gap:8px;margin-bottom:21px;color:#e6edf5;font-size:13px;font-weight:650}
-    .${BLOCK_CLASS}-box-title svg{color:#9eacc0}
-    .${BLOCK_CLASS}-dual{display:grid;grid-template-columns:1fr 1fr;min-width:0}
-    .${BLOCK_CLASS}-dual-item{position:relative;min-width:0;padding-right:16px}
-    .${BLOCK_CLASS}-dual-item+ .${BLOCK_CLASS}-dual-item{padding-right:0;padding-left:16px;border-left:1px solid rgba(255,255,255,.07)}
-    .${BLOCK_CLASS}-small-label{display:flex;align-items:center;gap:6px;color:#8996aa;font-size:10.5px;font-weight:550}
-    .${BLOCK_CLASS}-arrow-down{color:#43a7ff;font-size:15px;line-height:1}
-    .${BLOCK_CLASS}-arrow-up{color:#38e88c;font-size:15px;line-height:1}
-    .${BLOCK_CLASS}-data{margin-top:6px;color:#f5f7fa;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .${BLOCK_CLASS}-small-chart{height:29px;margin-top:10px}
-    .${BLOCK_CLASS}-small-chart svg{display:block;width:100%;height:100%;overflow:visible}
-    .${BLOCK_CLASS}-small-chart path{fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
-    .${BLOCK_CLASS}-uptime-grid{display:grid;grid-template-columns:1fr 1fr;margin-top:27px}
-    .${BLOCK_CLASS}-uptime-item{min-width:0}
-    .${BLOCK_CLASS}-uptime-item+ .${BLOCK_CLASS}-uptime-item{border-left:1px solid rgba(255,255,255,.07);padding-left:16px}
-    .${BLOCK_CLASS}-uptime-label{color:#8996aa;font-size:10.5px}
-    .${BLOCK_CLASS}-uptime-value{margin-top:7px;color:#f5f7fa;font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .${BLOCK_CLASS}-error{color:#8996aa;font-size:11px;padding:.2rem 0}
-    @media(max-width:900px){
-      .${BLOCK_CLASS}-bottom{grid-template-columns:1fr 1fr}
-      .${BLOCK_CLASS}-bottom>.${BLOCK_CLASS}-box:last-child{grid-column:1/-1}
+    .${CARD_CLASS}:hover{
+      border-color:color-mix(in srgb,var(--border) 72%,#38e88c 28%)!important;
+      box-shadow:0 10px 28px rgba(0,0,0,.13)!important;
     }
-    @media(max-width:640px){
-      .${CARD_CLASS}{border-radius:20px!important}
-      .${CARD_CLASS}>div.p-3{padding:16px!important}
-      .${BLOCK_CLASS}-top,.${BLOCK_CLASS}-bottom{grid-template-columns:1fr}
-      .${BLOCK_CLASS}-bottom>.${BLOCK_CLASS}-box:last-child{grid-column:auto}
-      .${BLOCK_CLASS}-box{min-height:124px;padding:16px;border-radius:16px}
-      .${BLOCK_CLASS}-spark{left:16px;right:16px}
+    .${BLOCK_CLASS}{
+      margin-top:.72rem;
+      padding-top:.72rem;
+      border-top:1px solid color-mix(in srgb,var(--border) 78%,transparent);
+      color:var(--foreground);
+      pointer-events:none;
+      min-width:0;
+    }
+    .${BLOCK_CLASS}-grid{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      gap:8px;
+      min-width:0;
+    }
+    .${BLOCK_CLASS}-metric{
+      position:relative;
+      min-width:0;
+      height:78px;
+      padding:10px 11px;
+      overflow:hidden;
+      border:1px solid color-mix(in srgb,var(--border) 82%,transparent);
+      border-radius:12px;
+      background:linear-gradient(145deg,color-mix(in srgb,var(--card) 96%,#17212c 4%),color-mix(in srgb,var(--card) 98%,#090d12 2%));
+      box-shadow:inset 0 1px rgba(255,255,255,.018);
+    }
+    .${BLOCK_CLASS}-metric.wide{height:86px}
+    .${BLOCK_CLASS}-head{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:7px;
+      min-width:0;
+    }
+    .${BLOCK_CLASS}-title{
+      display:flex;
+      align-items:center;
+      gap:5px;
+      min-width:0;
+      color:var(--muted-foreground);
+      font-size:10px;
+      line-height:1;
+      font-weight:650;
+      letter-spacing:.01em;
+      white-space:nowrap;
+    }
+    .${BLOCK_CLASS}-title svg{width:12px;height:12px;flex:none}
+    .${BLOCK_CLASS}-value{
+      min-width:0;
+      color:var(--foreground);
+      font-size:12px;
+      line-height:1;
+      font-weight:700;
+      font-variant-numeric:tabular-nums;
+      white-space:nowrap;
+      text-align:right;
+    }
+    .${BLOCK_CLASS}-sub{
+      display:block;
+      margin-top:4px;
+      color:var(--muted-foreground);
+      font-size:8.5px;
+      line-height:1;
+      font-weight:500;
+    }
+    .${BLOCK_CLASS}-spark{
+      position:absolute;
+      left:10px;
+      right:10px;
+      bottom:8px;
+      height:28px;
+      opacity:.92;
+    }
+    .${BLOCK_CLASS}-spark svg,
+    .${BLOCK_CLASS}-mini-spark svg{display:block;width:100%;height:100%;overflow:visible}
+    .${BLOCK_CLASS}-spark path,
+    .${BLOCK_CLASS}-mini-spark path{
+      fill:none;
+      stroke-width:2.1;
+      stroke-linecap:round;
+      stroke-linejoin:round;
+    }
+    .${BLOCK_CLASS}-spark.green path,.${BLOCK_CLASS}-mini-spark.green path{stroke:#38e88c;filter:drop-shadow(0 0 3px rgba(56,232,140,.27))}
+    .${BLOCK_CLASS}-spark.purple path,.${BLOCK_CLASS}-mini-spark.purple path{stroke:#9c86ff;filter:drop-shadow(0 0 3px rgba(156,134,255,.24))}
+    .${BLOCK_CLASS}-spark.blue path,.${BLOCK_CLASS}-mini-spark.blue path{stroke:#43a7ff;filter:drop-shadow(0 0 3px rgba(67,167,255,.24))}
+    .${BLOCK_CLASS}-dual{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      gap:0;
+      margin-top:10px;
+      min-width:0;
+    }
+    .${BLOCK_CLASS}-dual-item{min-width:0;padding-right:9px}
+    .${BLOCK_CLASS}-dual-item+ .${BLOCK_CLASS}-dual-item{
+      padding-right:0;
+      padding-left:9px;
+      border-left:1px solid color-mix(in srgb,var(--border) 78%,transparent);
+    }
+    .${BLOCK_CLASS}-small-label{
+      display:flex;
+      align-items:center;
+      gap:4px;
+      color:var(--muted-foreground);
+      font-size:8px;
+      line-height:1;
+      white-space:nowrap;
+    }
+    .${BLOCK_CLASS}-down{color:#43a7ff;font-size:10px}
+    .${BLOCK_CLASS}-up{color:#38e88c;font-size:10px}
+    .${BLOCK_CLASS}-data{
+      margin-top:4px;
+      color:var(--foreground);
+      font-size:10.5px;
+      line-height:1;
+      font-weight:700;
+      font-variant-numeric:tabular-nums;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .${BLOCK_CLASS}-mini-spark{height:14px;margin-top:5px;opacity:.9}
+    .${BLOCK_CLASS}-footer{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:0;
+      margin-top:8px;
+      padding:8px 10px;
+      border:1px solid color-mix(in srgb,var(--border) 82%,transparent);
+      border-radius:11px;
+      background:color-mix(in srgb,var(--card) 96%,transparent);
+    }
+    .${BLOCK_CLASS}-footer-item{min-width:0}
+    .${BLOCK_CLASS}-footer-item+ .${BLOCK_CLASS}-footer-item{
+      padding-left:10px;
+      border-left:1px solid color-mix(in srgb,var(--border) 78%,transparent);
+    }
+    .${BLOCK_CLASS}-footer-label{
+      display:flex;
+      align-items:center;
+      gap:4px;
+      color:var(--muted-foreground);
+      font-size:8px;
+      line-height:1;
+    }
+    .${BLOCK_CLASS}-footer-value{
+      margin-top:4px;
+      color:var(--foreground);
+      font-size:10.5px;
+      line-height:1;
+      font-weight:700;
+      font-variant-numeric:tabular-nums;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .${BLOCK_CLASS}-error{color:var(--muted-foreground);font-size:9px;padding:.1rem 0}
+
+    .${IP_CLASS}{
+      display:inline-block;
+      min-width:92px;
+      max-width:170px;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      vertical-align:middle;
+      font-variant-numeric:tabular-nums;
+    }
+    .${IP_BUTTON_CLASS}{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:23px;
+      height:23px;
+      margin-left:4px;
+      padding:0;
+      border:0;
+      border-radius:7px;
+      background:transparent;
+      color:var(--muted-foreground);
+      vertical-align:middle;
+      cursor:pointer;
+      pointer-events:auto;
+      transition:background .15s ease,color .15s ease;
+    }
+    .${IP_BUTTON_CLASS}:hover{background:color-mix(in srgb,var(--muted) 70%,transparent);color:var(--foreground)}
+    .${IP_BUTTON_CLASS}:focus-visible{outline:2px solid color-mix(in srgb,var(--primary) 65%,transparent);outline-offset:1px}
+    .${IP_BUTTON_CLASS} svg{width:13px;height:13px}
+
+    @media(max-width:440px){
+      .${BLOCK_CLASS}-grid{grid-template-columns:1fr}
+      .${BLOCK_CLASS}-metric,.${BLOCK_CLASS}-metric.wide{height:78px}
     }
   `;
 
@@ -133,17 +281,35 @@
     return `${minutes}m`;
   }
 
-  function remember(nodeId, key, value) {
+  function pushHistory(nodeId, key, value) {
     const id = String(nodeId);
     if (!history.has(id)) history.set(id, {});
     const bucket = history.get(id);
     if (!Array.isArray(bucket[key])) bucket[key] = [];
     bucket[key].push(Number(value) || 0);
-    if (bucket[key].length > 18) bucket[key].shift();
-    return bucket[key];
+    if (bucket[key].length > 20) bucket[key].shift();
   }
 
-  function sparkPath(values, width = 300, height = 58, pad = 4) {
+  function getHistory(nodeId, key) {
+    const values = history.get(String(nodeId))?.[key];
+    return Array.isArray(values) && values.length ? values : [0, 0];
+  }
+
+  function sampleHistory() {
+    for (const node of nodesCache) {
+      const stats = statsCache[String(node.id)] ?? statsCache[node.id] ?? null;
+      if (!stats) continue;
+      const ramPct = stats.mem_total ? clamp((Number(stats.mem_used) / Number(stats.mem_total)) * 100) : 0;
+      pushHistory(node.id, 'cpu', clamp(stats.cpu_usage));
+      pushHistory(node.id, 'ram', ramPct);
+      pushHistory(node.id, 'rx', Number(stats.incoming_bandwidth_speed) || 0);
+      pushHistory(node.id, 'tx', Number(stats.outgoing_bandwidth_speed) || 0);
+      pushHistory(node.id, 'down', Number(node.downlink) || 0);
+      pushHistory(node.id, 'up', Number(node.uplink) || 0);
+    }
+  }
+
+  function sparkPath(values, width = 180, height = 28, pad = 2) {
     const points = Array.isArray(values) && values.length ? values : [0, 0];
     const min = Math.min(...points);
     const max = Math.max(...points);
@@ -156,26 +322,38 @@
     }).join(' ');
   }
 
-  function spark(values, tone = 'blue', small = false) {
-    const w = small ? 180 : 300;
-    const h = small ? 35 : 58;
-    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${sparkPath(values, w, h, 3)}"/></svg>`;
+  function spark(values, width = 180, height = 28) {
+    return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><path d="${sparkPath(values, width, height, 2)}"/></svg>`;
   }
 
-  const icon = (path, size = 15) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+  const icon = (path, size = 12) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
   const cpuIcon = icon('<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>');
   const ramIcon = icon('<path d="M2 12h20M6 12v4M10 12v4M14 12v4M18 12v4M4 8h16a2 2 0 0 1 2 2v6H2v-6a2 2 0 0 1 2-2Z"/>');
   const networkIcon = icon('<circle cx="12" cy="12" r="3"/><path d="M2 12h7M15 12h7M12 2v7M12 15v7"/>');
   const trafficIcon = icon('<path d="M7 7h11l-3-3M17 17H6l3 3"/>');
   const clockIcon = icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
+  const eyeIcon = icon('<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>', 13);
+  const eyeOffIcon = icon('<path d="m3 3 18 18"/><path d="M10.6 6.2A9.8 9.8 0 0 1 12 6c6.5 0 10 6 10 6a16.4 16.4 0 0 1-3 3.8M6.5 6.5C3.7 8.1 2 12 2 12s3.5 6 10 6a9.9 9.9 0 0 0 4.1-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/>', 13);
+
+  function findKnownCard(nodeId) {
+    const id = String(nodeId);
+    return [...document.querySelectorAll(`.${CARD_CLASS}`)].find(el => el.dataset.hsNodeId === id) || null;
+  }
 
   function cardForNode(node) {
+    const known = findKnownCard(node.id);
+    if (known) return known;
+
     const endpoint = `${node.address}:${node.port || 62050}`;
     const spans = [...document.querySelectorAll('span[dir="ltr"]')].filter(el => (el.textContent || '').trim() === endpoint);
     for (const span of spans) {
       let el = span;
       for (let depth = 0; el && depth < 8; depth += 1, el = el.parentElement) {
-        if (el.tagName === 'DIV' && el.classList.contains('relative') && el.classList.contains('overflow-hidden') && el.classList.contains('border')) return el;
+        if (el.tagName === 'DIV' && el.classList.contains('relative') && el.classList.contains('overflow-hidden') && el.classList.contains('border')) {
+          el.classList.add(CARD_CLASS);
+          el.dataset.hsNodeId = String(node.id);
+          return el;
+        }
       }
     }
     return null;
@@ -187,10 +365,66 @@
     return [...direct.children].find(el => el.tagName === 'DIV' && el.classList.contains('min-w-0') && el.classList.contains('flex-1')) || null;
   }
 
+  function maskedEndpoint() {
+    return '••••••••••••••';
+  }
+
+  function maskNodeIp(card, node) {
+    const id = String(node.id);
+    const endpoint = `${node.address}:${node.port || 62050}`;
+    let span = [...card.querySelectorAll('span[dir="ltr"]')].find(el => el.dataset.hsIpNodeId === id);
+    if (!span) span = [...card.querySelectorAll('span[dir="ltr"]')].find(el => (el.textContent || '').trim() === endpoint);
+    if (!span) return;
+
+    span.classList.add(IP_CLASS);
+    span.dataset.hsIpNodeId = id;
+    span.dataset.hsRealEndpoint = endpoint;
+    span.textContent = revealedIps.has(id) ? endpoint : maskedEndpoint();
+
+    let button = span.nextElementSibling;
+    if (!button || !button.classList.contains(IP_BUTTON_CLASS) || button.dataset.hsIpNodeId !== id) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = IP_BUTTON_CLASS;
+      button.dataset.hsIpNodeId = id;
+      span.insertAdjacentElement('afterend', button);
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (revealedIps.has(id)) revealedIps.delete(id);
+        else revealedIps.add(id);
+        const targetSpan = button.previousElementSibling;
+        if (targetSpan?.classList.contains(IP_CLASS)) {
+          const shown = revealedIps.has(id);
+          targetSpan.textContent = shown ? targetSpan.dataset.hsRealEndpoint : maskedEndpoint();
+          button.innerHTML = shown ? eyeOffIcon : eyeIcon;
+          button.setAttribute('aria-label', shown ? 'Hide IP address' : 'Show IP address');
+          button.title = shown ? 'Hide IP' : 'Show IP';
+        }
+      });
+    }
+
+    const shown = revealedIps.has(id);
+    button.innerHTML = shown ? eyeOffIcon : eyeIcon;
+    button.setAttribute('aria-label', shown ? 'Hide IP address' : 'Show IP address');
+    button.title = shown ? 'Hide IP' : 'Show IP';
+  }
+
+  function restoreIps() {
+    document.querySelectorAll(`.${IP_CLASS}`).forEach(span => {
+      if (span.dataset.hsRealEndpoint) span.textContent = span.dataset.hsRealEndpoint;
+      span.classList.remove(IP_CLASS);
+      delete span.dataset.hsIpNodeId;
+      delete span.dataset.hsRealEndpoint;
+    });
+    document.querySelectorAll(`.${IP_BUTTON_CLASS}`).forEach(button => button.remove());
+    revealedIps.clear();
+  }
+
   function renderNode(node, stats) {
     const card = cardForNode(node);
     if (!card) return false;
-    card.classList.add(CARD_CLASS);
+    maskNodeIp(card, node);
 
     const content = contentForCard(card);
     if (!content) return false;
@@ -204,7 +438,8 @@
     }
 
     if (!stats) {
-      block.innerHTML = '<div class="hs-node-pro-error">Realtime stats unavailable</div>';
+      const errorHtml = `<div class="${BLOCK_CLASS}-error">Realtime stats unavailable</div>`;
+      if (block.innerHTML !== errorHtml) block.innerHTML = errorHtml;
       return true;
     }
 
@@ -218,96 +453,96 @@
     const lifetimeUp = Number(node.lifetime_uplink) || 0;
     const lifetimeTotal = lifetimeDown + lifetimeUp;
 
-    const cpuHistory = remember(node.id, 'cpu', cpu);
-    const ramHistory = remember(node.id, 'ram', ramPct);
-    const rxHistory = remember(node.id, 'rx', rx);
-    const txHistory = remember(node.id, 'tx', tx);
-    const downHistory = remember(node.id, 'down', sessionDown);
-    const upHistory = remember(node.id, 'up', sessionUp);
-
-    block.innerHTML = `
-      <div class="${BLOCK_CLASS}-top">
-        <div class="${BLOCK_CLASS}-box">
+    const html = `
+      <div class="${BLOCK_CLASS}-grid">
+        <div class="${BLOCK_CLASS}-metric">
           <div class="${BLOCK_CLASS}-head">
             <div class="${BLOCK_CLASS}-title">${cpuIcon}<span>CPU</span></div>
-            <div class="${BLOCK_CLASS}-value">${cpu.toFixed(cpu < 10 ? 1 : 0)}%<span class="${BLOCK_CLASS}-sub">${Number(stats.cpu_cores) || 0} cores</span></div>
+            <div class="${BLOCK_CLASS}-value">${cpu.toFixed(cpu < 10 ? 1 : 0)}%<span class="${BLOCK_CLASS}-sub">${Number(stats.cpu_cores) || 0}c</span></div>
           </div>
-          <div class="${BLOCK_CLASS}-spark green">${spark(cpuHistory, 'green')}</div>
+          <div class="${BLOCK_CLASS}-spark green">${spark(getHistory(node.id, 'cpu'))}</div>
         </div>
 
-        <div class="${BLOCK_CLASS}-box">
+        <div class="${BLOCK_CLASS}-metric">
           <div class="${BLOCK_CLASS}-head">
             <div class="${BLOCK_CLASS}-title">${ramIcon}<span>RAM</span></div>
             <div class="${BLOCK_CLASS}-value">${formatBytes(stats.mem_used)}<span class="${BLOCK_CLASS}-sub">/ ${formatBytes(stats.mem_total)} · ${ramPct.toFixed(0)}%</span></div>
           </div>
-          <div class="${BLOCK_CLASS}-spark purple">${spark(ramHistory, 'purple')}</div>
+          <div class="${BLOCK_CLASS}-spark purple">${spark(getHistory(node.id, 'ram'))}</div>
+        </div>
+
+        <div class="${BLOCK_CLASS}-metric wide">
+          <div class="${BLOCK_CLASS}-title">${networkIcon}<span>Network</span></div>
+          <div class="${BLOCK_CLASS}-dual">
+            <div class="${BLOCK_CLASS}-dual-item">
+              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-down">↓</span><span>RX</span></div>
+              <div class="${BLOCK_CLASS}-data">${formatRate(rx)}</div>
+              <div class="${BLOCK_CLASS}-mini-spark blue">${spark(getHistory(node.id, 'rx'), 110, 14)}</div>
+            </div>
+            <div class="${BLOCK_CLASS}-dual-item">
+              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-up">↑</span><span>TX</span></div>
+              <div class="${BLOCK_CLASS}-data">${formatRate(tx)}</div>
+              <div class="${BLOCK_CLASS}-mini-spark green">${spark(getHistory(node.id, 'tx'), 110, 14)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="${BLOCK_CLASS}-metric wide">
+          <div class="${BLOCK_CLASS}-title">${trafficIcon}<span>Traffic</span></div>
+          <div class="${BLOCK_CLASS}-dual">
+            <div class="${BLOCK_CLASS}-dual-item">
+              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-down">↓</span><span>Down</span></div>
+              <div class="${BLOCK_CLASS}-data">${formatBytes(sessionDown)}</div>
+              <div class="${BLOCK_CLASS}-mini-spark blue">${spark(getHistory(node.id, 'down'), 110, 14)}</div>
+            </div>
+            <div class="${BLOCK_CLASS}-dual-item">
+              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-up">↑</span><span>Up</span></div>
+              <div class="${BLOCK_CLASS}-data">${formatBytes(sessionUp)}</div>
+              <div class="${BLOCK_CLASS}-mini-spark green">${spark(getHistory(node.id, 'up'), 110, 14)}</div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="${BLOCK_CLASS}-bottom">
-        <div class="${BLOCK_CLASS}-box">
-          <div class="${BLOCK_CLASS}-box-title">${networkIcon}<span>Network</span></div>
-          <div class="${BLOCK_CLASS}-dual">
-            <div class="${BLOCK_CLASS}-dual-item">
-              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-arrow-down">↓</span><span>RX</span></div>
-              <div class="${BLOCK_CLASS}-data">${formatRate(rx)}</div>
-              <div class="${BLOCK_CLASS}-small-chart blue">${spark(rxHistory, 'blue', true)}</div>
-            </div>
-            <div class="${BLOCK_CLASS}-dual-item">
-              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-arrow-up">↑</span><span>TX</span></div>
-              <div class="${BLOCK_CLASS}-data">${formatRate(tx)}</div>
-              <div class="${BLOCK_CLASS}-small-chart green">${spark(txHistory, 'green', true)}</div>
-            </div>
-          </div>
+      <div class="${BLOCK_CLASS}-footer">
+        <div class="${BLOCK_CLASS}-footer-item">
+          <div class="${BLOCK_CLASS}-footer-label">${clockIcon}<span>Uptime</span></div>
+          <div class="${BLOCK_CLASS}-footer-value">${formatUptime(stats.uptime)}</div>
         </div>
-
-        <div class="${BLOCK_CLASS}-box">
-          <div class="${BLOCK_CLASS}-box-title">${trafficIcon}<span>Total Traffic</span></div>
-          <div class="${BLOCK_CLASS}-dual">
-            <div class="${BLOCK_CLASS}-dual-item">
-              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-arrow-down">↓</span><span>Downloaded</span></div>
-              <div class="${BLOCK_CLASS}-data">${formatBytes(sessionDown)}</div>
-              <div class="${BLOCK_CLASS}-small-chart blue">${spark(downHistory, 'blue', true)}</div>
-            </div>
-            <div class="${BLOCK_CLASS}-dual-item">
-              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-arrow-up">↑</span><span>Uploaded</span></div>
-              <div class="${BLOCK_CLASS}-data">${formatBytes(sessionUp)}</div>
-              <div class="${BLOCK_CLASS}-small-chart green">${spark(upHistory, 'green', true)}</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="${BLOCK_CLASS}-box">
-          <div class="${BLOCK_CLASS}-box-title">${clockIcon}<span>Uptime & Life</span></div>
-          <div class="${BLOCK_CLASS}-uptime-grid">
-            <div class="${BLOCK_CLASS}-uptime-item">
-              <div class="${BLOCK_CLASS}-uptime-label">Uptime</div>
-              <div class="${BLOCK_CLASS}-uptime-value">${formatUptime(stats.uptime)}</div>
-            </div>
-            <div class="${BLOCK_CLASS}-uptime-item">
-              <div class="${BLOCK_CLASS}-uptime-label">Life</div>
-              <div class="${BLOCK_CLASS}-uptime-value">${lifetimeTotal ? formatBytes(lifetimeTotal) : '—'}</div>
-            </div>
-          </div>
+        <div class="${BLOCK_CLASS}-footer-item">
+          <div class="${BLOCK_CLASS}-footer-label"><span>Life</span></div>
+          <div class="${BLOCK_CLASS}-footer-value">${lifetimeTotal ? formatBytes(lifetimeTotal) : '—'}</div>
         </div>
       </div>`;
 
-    block.querySelectorAll(`.${BLOCK_CLASS}-small-chart.blue path`).forEach(path => { path.style.stroke = '#43a7ff'; path.style.filter = 'drop-shadow(0 0 4px rgba(67,167,255,.28))'; });
-    block.querySelectorAll(`.${BLOCK_CLASS}-small-chart.green path`).forEach(path => { path.style.stroke = '#38e88c'; path.style.filter = 'drop-shadow(0 0 4px rgba(56,232,140,.28))'; });
+    if (block.innerHTML !== html) block.innerHTML = html;
     return true;
   }
 
   function removeBlocks() {
     document.querySelectorAll(`.${BLOCK_CLASS}`).forEach(el => el.remove());
-    document.querySelectorAll(`.${CARD_CLASS}`).forEach(el => el.classList.remove(CARD_CLASS));
+    restoreIps();
+    document.querySelectorAll(`.${CARD_CLASS}`).forEach(card => {
+      card.classList.remove(CARD_CLASS);
+      delete card.dataset.hsNodeId;
+    });
   }
 
   function renderAll() {
+    renderQueued = false;
     if (!enabled || !onNodesPage()) {
       removeBlocks();
       return;
     }
-    for (const node of nodesCache) renderNode(node, statsCache[String(node.id)] ?? statsCache[node.id] ?? null);
+    for (const node of nodesCache) {
+      renderNode(node, statsCache[String(node.id)] ?? statsCache[node.id] ?? null);
+    }
+  }
+
+  function queueRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    window.requestAnimationFrame(renderAll);
   }
 
   async function refreshData() {
@@ -320,6 +555,7 @@
       ]);
       nodesCache = Array.isArray(nodesData?.nodes) ? nodesData.nodes : [];
       statsCache = statsData && typeof statsData === 'object' ? statsData : {};
+      sampleHistory();
       renderAll();
     } catch (error) {
       console.warn('[HS Node PRO] refresh failed', error);
@@ -345,13 +581,13 @@
     }
     injectStyle();
     if (refresh) refreshData();
-    else renderAll();
+    else queueRender();
   }
 
   function start() {
     injectStyle();
     observer = new MutationObserver(() => {
-      if (enabled && onNodesPage()) window.requestAnimationFrame(renderAll);
+      if (enabled && onNodesPage()) queueRender();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
