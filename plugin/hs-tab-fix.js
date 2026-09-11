@@ -3,7 +3,7 @@
 
   const ROOT_ID = 'hs-plugin-root';
   const NAV_ID = 'hs-plugin-nav';
-  const VERSION = '0.1.6';
+  const VERSION = '0.1.7';
   const rawFetch = window.fetch.bind(window);
 
   function authHeaders(extra) {
@@ -30,52 +30,54 @@
     const existing = document.getElementById(ROOT_ID);
     if (existing?.parentElement) return existing.parentElement;
 
-    const inset = document.querySelector('main.dashboard-scroll') || document.querySelector('main');
+    const inset = document.querySelector('main.dashboard-scroll');
     if (!inset) return null;
 
-    // Most robust anchor: PasarGuard footer is the sibling immediately after PageTransition.
-    const footerLink = [...inset.querySelectorAll('a')].find(a => /PasarGuard/i.test(a.textContent || ''));
-    if (footerLink) {
-      let footerBox = footerLink.closest('div');
-      while (footerBox && footerBox.parentElement && footerBox.parentElement !== inset) {
-        const parent = footerBox.parentElement;
-        const siblings = [...parent.children];
-        if (siblings.length >= 2 && siblings[siblings.length - 1].contains(footerLink)) {
-          const previous = siblings[siblings.length - 2];
-          if (previous && previous.tagName === 'DIV') return previous;
-        }
-        footerBox = parent;
-      }
-    }
-
-    // Current PasarGuard _dashboard.tsx structure.
-    const shells = [...inset.querySelectorAll('div')].filter(el =>
+    // Exact current PasarGuard layout from dashboard/src/pages/_dashboard.tsx:
+    // SidebarInset.dashboard-scroll
+    //   -> TopbarAd
+    //   -> VersionUpdateBanner
+    //   -> div.flex.min-h-0.w-full.flex-1.flex-col.justify-between
+    //        -> PageTransition (first child)
+    //        -> Footer (second child)
+    const shell = [...inset.children].find(el =>
+      el.tagName === 'DIV' &&
       el.classList.contains('flex') &&
       el.classList.contains('min-h-0') &&
+      el.classList.contains('w-full') &&
       el.classList.contains('flex-1') &&
       el.classList.contains('flex-col') &&
       el.classList.contains('justify-between')
     );
-    for (const shell of shells) {
-      const children = [...shell.children];
-      if (children.length >= 2 && children[0]?.tagName === 'DIV') return children[0];
+    if (shell?.firstElementChild?.tagName === 'DIV') return shell.firstElementChild;
+
+    // Structural fallback: find the footer that contains the PasarGuard link;
+    // PageTransition is its previous sibling in the same dashboard shell.
+    const footerLink = [...inset.querySelectorAll('a')].find(a => /PasarGuard/i.test(a.textContent || ''));
+    if (footerLink) {
+      let node = footerLink;
+      while (node && node !== inset) {
+        const parent = node.parentElement;
+        if (!parent) break;
+        const children = [...parent.children];
+        const footerChild = children.find(child => child.contains(footerLink));
+        if (children.length >= 2 && footerChild === children[children.length - 1]) {
+          const previous = footerChild.previousElementSibling;
+          if (previous?.tagName === 'DIV') return previous;
+        }
+        node = parent;
+      }
     }
 
-    // Safe fallback: choose the flex column that contains the currently rendered route,
-    // never the SidebarInset itself.
-    const candidates = [...inset.querySelectorAll('div')].filter(el =>
-      el.classList.contains('flex') &&
-      el.classList.contains('flex-1') &&
-      el.classList.contains('flex-col') &&
-      !el.hasAttribute('data-sidebar')
-    );
-    return candidates.find(el => el.children.length > 0) || null;
+    return null;
   }
 
   function hideNative(outlet) {
     [...outlet.children].forEach(el => {
       if (el.id === ROOT_ID) return;
-      if (!el.hasAttribute('data-hs-tab-display')) el.setAttribute('data-hs-tab-display', el.style.display || '');
+      if (!el.hasAttribute('data-hs-tab-display')) {
+        el.setAttribute('data-hs-tab-display', el.style.display || '');
+      }
       el.style.display = 'none';
     });
   }
@@ -91,9 +93,13 @@
       });
     }
     root?.remove();
+    setActive(false);
   }
 
   function setActive(active) {
+    document.querySelectorAll('[data-sidebar="menu-button"][data-active="true"]').forEach(button => {
+      if (!button.closest(`#${NAV_ID}`) && active) button.dataset.active = 'false';
+    });
     const button = document.querySelector(`#${NAV_ID} [data-sidebar="menu-button"]`);
     if (button) button.dataset.active = active ? 'true' : 'false';
   }
@@ -111,27 +117,7 @@
     if (thumb) thumb.dataset.state = state;
   }
 
-  async function openTab() {
-    let state = window.HSPluginDebug?.getState?.() || null;
-    if (!state) state = await api('/state');
-
-    const outlet = findOutlet();
-    if (!outlet) {
-      console.error('[HS Plugin] unable to locate PasarGuard PageTransition');
-      return;
-    }
-
-    hideNative(outlet);
-    let root = document.getElementById(ROOT_ID);
-    if (root && root.parentElement !== outlet) root.remove();
-    root = document.getElementById(ROOT_ID);
-    if (!root) {
-      root = document.createElement('section');
-      root.id = ROOT_ID;
-      root.className = 'flex min-h-0 w-full flex-1 flex-col';
-      outlet.appendChild(root);
-    }
-
+  function renderPage(root, state, loading = false, error = '') {
     const enabled = !!state?.features?.host_usage_ratio?.enabled;
     root.innerHTML = `
       <div class="flex min-h-[calc(100vh-200px)] w-full flex-col">
@@ -149,15 +135,18 @@
                 </div>
                 ${renderSwitch(enabled)}
               </div>
-              <div id="hs-tab-status" class="text-muted-foreground min-h-5 text-xs"></div>
+              <div id="hs-tab-status" class="text-muted-foreground min-h-5 text-xs">${error || (loading ? 'Loading…' : '')}</div>
             </div>
           </div>
         </div>
       </div>`;
 
-    setActive(true);
     const toggle = root.querySelector('#hs-tab-feature-toggle');
-    toggle?.addEventListener('click', async () => {
+    if (!toggle) return;
+    toggle.disabled = loading || !!error;
+    toggle.addEventListener('click', async event => {
+      event.preventDefault();
+      event.stopPropagation();
       const current = toggle.getAttribute('aria-checked') === 'true';
       const next = !current;
       const status = root.querySelector('#hs-tab-status');
@@ -169,30 +158,75 @@
         await api('/resync', { method: 'POST', body: '{}' });
         await window.HSPluginDebug?.refresh?.();
         if (status) status.textContent = 'Changes applied.';
-      } catch (error) {
+      } catch (err) {
         syncSwitch(toggle, current);
-        if (status) status.textContent = error.message;
+        if (status) status.textContent = err?.message || String(err);
       } finally {
         toggle.disabled = false;
       }
     });
   }
 
+  async function openTab() {
+    const outlet = findOutlet();
+    if (!outlet) {
+      console.error('[HS Plugin] PageTransition not found', {
+        main: !!document.querySelector('main.dashboard-scroll'),
+        nav: !!document.getElementById(NAV_ID),
+      });
+      return false;
+    }
+
+    hideNative(outlet);
+    let root = document.getElementById(ROOT_ID);
+    if (root && root.parentElement !== outlet) root.remove();
+    root = document.getElementById(ROOT_ID);
+    if (!root) {
+      root = document.createElement('section');
+      root.id = ROOT_ID;
+      root.className = 'flex min-h-0 w-full flex-1 flex-col';
+      outlet.appendChild(root);
+    }
+
+    // Render immediately. API availability must never decide whether the tab opens.
+    const cached = window.HSPluginDebug?.getState?.() || null;
+    renderPage(root, cached, !cached, '');
+    setActive(true);
+
+    if (!cached) {
+      try {
+        const state = await api('/state');
+        if (document.getElementById(ROOT_ID) === root) renderPage(root, state, false, '');
+      } catch (err) {
+        if (document.getElementById(ROOT_ID) === root) {
+          renderPage(root, null, false, `HS API: ${err?.message || String(err)}`);
+        }
+      }
+    }
+    return true;
+  }
+
+  // Own HS navigation completely. Capture phase + stopImmediatePropagation keeps
+  // stale/older HS click handlers from preventing the tab from opening.
   document.addEventListener('click', event => {
     const hsNav = event.target.closest?.(`#${NAV_ID}`);
-    if (hsNav) {
-      setTimeout(() => {
-        const root = document.getElementById(ROOT_ID);
-        if (!root || root.offsetParent === null) openTab().catch(error => console.error('[HS Plugin] tab open failed', error));
-      }, 0);
-      return;
-    }
-
-    if (document.getElementById(ROOT_ID) && event.target.closest?.('a')) {
-      restoreNative();
-      setActive(false);
-    }
+    if (!hsNav) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    openTab().catch(err => console.error('[HS Plugin] tab open failed', err));
   }, true);
 
-  window.HSPluginTabFix = { version: VERSION, open: openTab, close: restoreNative, findOutlet };
+  // Leaving through a normal PasarGuard link restores React's route content.
+  document.addEventListener('click', event => {
+    if (!document.getElementById(ROOT_ID)) return;
+    if (event.target.closest?.(`#${NAV_ID}`)) return;
+    if (event.target.closest?.('a')) restoreNative();
+  }, true);
+
+  window.HSPluginTabFix = {
+    version: VERSION,
+    open: openTab,
+    close: restoreNative,
+    findOutlet,
+  };
 })();
