@@ -26,7 +26,7 @@ EVENTS_FILE = DATA_DIR / "events.jsonl"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": True,
-    "telemetry_enabled": False,
+    "telemetry_enabled": True,
     "low_cpu_mode": True,
     "integration_guard_enabled": True,
     "mode": "observe",
@@ -118,16 +118,16 @@ async def get_status(_owner: AdminDetails = Depends(_require_owner)):
     status_value = _read_json(
         STATUS_FILE,
         {
-            "version": 3,
+            "version": 2,
             "stage": "starting",
             "mode": "observe",
             "enabled": True,
-            "telemetry_enabled": False,
+            "telemetry_enabled": True,
             "low_cpu_mode": True,
             "integration_guard_enabled": True,
             "enforcement": {
                 "active": False,
-                "policy": "observe",
+                "policy": "observe-only",
                 "traffic_modified": False,
                 "fail_open": True,
             },
@@ -141,12 +141,12 @@ async def get_status(_owner: AdminDetails = Depends(_require_owner)):
         },
     )
     updated = status_value.get("updated_at")
-    if not config.get("telemetry_enabled", False):
-        stale_after = 150
-    elif config.get("low_cpu_mode", True):
+    if not config.get("telemetry_enabled", True):
         stale_after = 75
-    else:
+    elif config.get("low_cpu_mode", True):
         stale_after = 35
+    else:
+        stale_after = 20
     try:
         stale = not updated or (datetime.now(UTC) - datetime.fromisoformat(updated)).total_seconds() > stale_after
     except (ValueError, TypeError):
@@ -192,7 +192,7 @@ async def confirm_policy(body: ConfirmBody, _owner: AdminDetails = Depends(_requ
         pending = _read_json(STATUS_FILE, {}).get("enforcement", {}).get("pending") or {}
         if pending.get("token") != body.token or pending.get("deadline", 0) <= time.time():
             raise HTTPException(409, "No matching pending firewall policy")
-        config = {**DEFAULT_CONFIG, **_read_json(CONFIG_FILE, DEFAULT_CONFIG)}
+        config = _read_json(CONFIG_FILE, DEFAULT_CONFIG)
         config["confirmed_token"] = body.token
         _write_json(CONFIG_FILE, config)
-    return {"ok": True, "message": "Firewall confirmation queued"}
+    return {"ok": True, "message": "Confirmation queued; check enforcement status"}
