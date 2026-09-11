@@ -196,7 +196,6 @@
   }
 
   function renderShell(outlet) {
-    // The primary plugin owns hiding/restoring the outlet.
     mountedOutlet = outlet;
 
     let root = document.getElementById(ROOT_ID);
@@ -218,7 +217,7 @@
                 <h3 class="text-base font-semibold sm:text-lg">HS Plugin</h3>
                 <p class="text-muted-foreground text-xs sm:text-sm">Manage HS extensions for PasarGuard.</p>
               </div>
-              <div id="hs-plugin-top-tabs"><button type="button" class="hs-active">Features</button><button type="button" data-hs-top-tab="firewall">Firewall</button></div>
+              <div id="hs-plugin-top-tabs"><button type="button" class="hs-active">Features</button></div>
               <div class="space-y-2">
                 ${featureCard('Host Usage Ratio', 'Enable or disable Usage Ratio controls inside Host.', 'hs-host-ratio-slot')}
                 ${featureCard('Node PRO', 'Enhance Node cards with compact realtime CPU and RAM charts.', 'hs-node-pro-slot')}
@@ -338,7 +337,6 @@
     attempt();
   }
 
-  // Navigation belongs to hs-plugin.js. Never capture sidebar clicks here.
   window.HSPluginTabFix = {
     version: '0.4.0',
     open: () => window.HSPluginDebug?.open?.(),
@@ -347,7 +345,6 @@
     render(outlet) {
       injectNodeProBrandStyle();
       const root = renderShell(outlet);
-      root.querySelector('[data-hs-top-tab="firewall"]')?.addEventListener('click', () => window.HSShieldDebug?.open?.());
       window.HSServices?.mountTabs?.(root, 'features');
       hydrate(root).finally(refreshAdminTimeControl);
       refreshAdminTimeControl();
