@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.7.2';
+  const VERSION = '0.7.3';
   const STYLE_ID = 'hs-node-pro-style';
   const BLOCK_CLASS = 'hs-node-pro';
   const CARD_CLASS = 'hs-node-pro-card';
@@ -24,18 +24,12 @@
 
   const css = `
     .${CARD_CLASS}{
-      position:relative!important;
-      isolation:isolate;
       min-width:0!important;
       overflow:hidden!important;
-      border-color:var(--border)!important;
-      box-shadow:none!important;
-      transition:border-color .2s ease,background-color .2s ease!important;
     }
-    .${CARD_CLASS}::before{display:none!important}
-    .${CARD_CLASS}:hover{
-      border-color:var(--border)!important;
-      box-shadow:none!important;
+    .${CARD_CLASS}::before{
+      content:none!important;
+      display:none!important;
     }
 
     .${BLOCK_CLASS}{
@@ -197,11 +191,13 @@
   `;
 
   function injectStyle() {
-    if (document.getElementById(STYLE_ID)) return;
-    const style = document.createElement('style');
-    style.id = STYLE_ID;
-    style.textContent = css;
-    document.head.appendChild(style);
+    let style = document.getElementById(STYLE_ID);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = STYLE_ID;
+      document.head.appendChild(style);
+    }
+    if (style.textContent !== css) style.textContent = css;
   }
 
   function authHeaders(extra) {
