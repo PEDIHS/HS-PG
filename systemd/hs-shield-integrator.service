@@ -1,0 +1,21 @@
+[Unit]
+Description=Persistent HS Shield integration guard for PasarGuard
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/hs-pg/plugin/integrate-shield.sh
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+ExecStart=/bin/bash -lc 'while true; do /opt/hs-pg/plugin/integrate-shield.sh || true; sleep 15; done'
+Restart=always
+RestartSec=2
+PrivateTmp=true
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
