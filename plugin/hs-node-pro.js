@@ -1,12 +1,13 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.6.0';
+  const VERSION = '0.7.0';
   const STYLE_ID = 'hs-node-pro-style';
   const BLOCK_CLASS = 'hs-node-pro';
   const CARD_CLASS = 'hs-node-pro-card';
   const IP_CLASS = 'hs-node-ip-value';
   const IP_BUTTON_CLASS = 'hs-node-ip-toggle';
+  const MASK = '••••••••••••••';
   const rawFetch = window.fetch.bind(window);
 
   let enabled = false;
@@ -23,17 +24,34 @@
 
   const css = `
     .${CARD_CLASS}{
+      position:relative!important;
+      isolation:isolate;
       min-width:0!important;
       overflow:hidden!important;
-      transition:border-color .2s ease,box-shadow .2s ease!important;
+      border-color:color-mix(in srgb,var(--border) 78%,#d7b261 22%)!important;
+      box-shadow:0 8px 24px rgba(0,0,0,.10),inset 0 1px rgba(229,195,108,.07)!important;
+      transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease!important;
+    }
+    .${CARD_CLASS}::before{
+      content:'';
+      position:absolute;
+      z-index:3;
+      top:0;
+      left:14px;
+      right:14px;
+      height:1px;
+      pointer-events:none;
+      opacity:.78;
+      background:linear-gradient(90deg,transparent,rgba(222,182,87,.72),rgba(56,232,140,.36),transparent);
     }
     .${CARD_CLASS}:hover{
-      border-color:color-mix(in srgb,var(--border) 76%,#38e88c 24%)!important;
-      box-shadow:0 8px 24px rgba(0,0,0,.11)!important;
+      border-color:color-mix(in srgb,var(--border) 66%,#d7b261 34%)!important;
+      box-shadow:0 10px 28px rgba(0,0,0,.13),inset 0 1px rgba(229,195,108,.10)!important;
     }
+
     .${BLOCK_CLASS}{
-      margin-top:.58rem;
-      padding-top:.58rem;
+      margin-top:.56rem;
+      padding-top:.56rem;
       border-top:1px solid color-mix(in srgb,var(--border) 80%,transparent);
       color:var(--foreground);
       pointer-events:none;
@@ -42,24 +60,24 @@
     .${BLOCK_CLASS}-resources{
       display:grid;
       grid-template-columns:minmax(0,1fr) minmax(0,1fr);
-      gap:7px;
+      gap:8px;
       min-width:0;
     }
     .${BLOCK_CLASS}-metric{
       min-width:0;
-      height:66px;
+      height:69px;
       padding:9px 10px 8px;
       overflow:hidden;
       border:1px solid color-mix(in srgb,var(--border) 84%,transparent);
       border-radius:11px;
       background:linear-gradient(145deg,color-mix(in srgb,var(--card) 97%,#17212c 3%),color-mix(in srgb,var(--card) 99%,#090d12 1%));
-      box-shadow:inset 0 1px rgba(255,255,255,.015);
+      box-shadow:inset 0 1px rgba(255,255,255,.018);
     }
     .${BLOCK_CLASS}-head{
       display:flex;
       align-items:center;
       justify-content:space-between;
-      gap:8px;
+      gap:7px;
       min-width:0;
     }
     .${BLOCK_CLASS}-title{
@@ -78,7 +96,7 @@
     .${BLOCK_CLASS}-usage{
       min-width:0;
       color:color-mix(in srgb,var(--foreground) 88%,var(--muted-foreground) 12%);
-      font-size:9px;
+      font-size:8.7px;
       line-height:1;
       font-weight:600;
       font-variant-numeric:tabular-nums;
@@ -90,18 +108,18 @@
     .${BLOCK_CLASS}-chart-row{
       display:grid;
       grid-template-columns:minmax(0,1fr) 34px;
-      align-items:end;
+      align-items:center;
       gap:7px;
       margin-top:7px;
       min-width:0;
     }
     .${BLOCK_CLASS}-spark{
       position:relative;
-      height:27px;
+      height:29px;
       min-width:0;
       overflow:hidden;
       border-radius:7px;
-      background:linear-gradient(180deg,transparent 0%,color-mix(in srgb,var(--muted) 23%,transparent) 100%);
+      background:linear-gradient(180deg,transparent 0%,color-mix(in srgb,var(--muted) 21%,transparent) 100%);
     }
     .${BLOCK_CLASS}-spark::after{
       content:'';
@@ -110,94 +128,27 @@
       right:0;
       bottom:1px;
       height:1px;
-      background:color-mix(in srgb,var(--border) 58%,transparent);
+      pointer-events:none;
+      background:color-mix(in srgb,var(--border) 56%,transparent);
     }
-    .${BLOCK_CLASS}-spark svg,
-    .${BLOCK_CLASS}-mini-spark svg{display:block;width:100%;height:100%;overflow:visible}
-    .${BLOCK_CLASS}-spark path,
-    .${BLOCK_CLASS}-mini-spark path{
+    .${BLOCK_CLASS}-spark svg{display:block;width:100%;height:100%;overflow:visible}
+    .${BLOCK_CLASS}-spark path{
       fill:none;
       stroke-width:2;
       stroke-linecap:round;
       stroke-linejoin:round;
       vector-effect:non-scaling-stroke;
     }
-    .${BLOCK_CLASS}-spark.green path,.${BLOCK_CLASS}-mini-spark.green path{stroke:#38e88c;filter:drop-shadow(0 0 2.5px rgba(56,232,140,.24))}
-    .${BLOCK_CLASS}-spark.purple path,.${BLOCK_CLASS}-mini-spark.purple path{stroke:#9c86ff;filter:drop-shadow(0 0 2.5px rgba(156,134,255,.22))}
-    .${BLOCK_CLASS}-spark.blue path,.${BLOCK_CLASS}-mini-spark.blue path{stroke:#43a7ff;filter:drop-shadow(0 0 2.5px rgba(67,167,255,.22))}
+    .${BLOCK_CLASS}-spark.green path{stroke:#38e88c;filter:drop-shadow(0 0 2.5px rgba(56,232,140,.24))}
+    .${BLOCK_CLASS}-spark.purple path{stroke:#9c86ff;filter:drop-shadow(0 0 2.5px rgba(156,134,255,.22))}
     .${BLOCK_CLASS}-percent{
-      align-self:center;
       color:var(--foreground);
       font-size:11px;
       line-height:1;
-      font-weight:700;
+      font-weight:720;
       font-variant-numeric:tabular-nums;
       text-align:right;
       white-space:nowrap;
-    }
-    .${BLOCK_CLASS}-network{
-      display:grid;
-      grid-template-columns:auto minmax(0,1fr) minmax(0,1fr);
-      align-items:center;
-      gap:10px;
-      min-width:0;
-      height:55px;
-      margin-top:7px;
-      padding:8px 10px;
-      border:1px solid color-mix(in srgb,var(--border) 84%,transparent);
-      border-radius:11px;
-      background:linear-gradient(145deg,color-mix(in srgb,var(--card) 97%,#17212c 3%),color-mix(in srgb,var(--card) 99%,#090d12 1%));
-      box-shadow:inset 0 1px rgba(255,255,255,.015);
-    }
-    .${BLOCK_CLASS}-network-title{
-      display:flex;
-      align-items:center;
-      gap:5px;
-      color:var(--muted-foreground);
-      font-size:9.5px;
-      line-height:1;
-      font-weight:650;
-      white-space:nowrap;
-    }
-    .${BLOCK_CLASS}-network-title svg{width:11px;height:11px}
-    .${BLOCK_CLASS}-net-item{
-      display:grid;
-      grid-template-columns:auto minmax(0,1fr);
-      grid-template-rows:auto 13px;
-      column-gap:6px;
-      row-gap:4px;
-      min-width:0;
-      padding-left:10px;
-      border-left:1px solid color-mix(in srgb,var(--border) 76%,transparent);
-    }
-    .${BLOCK_CLASS}-net-label{
-      display:flex;
-      align-items:center;
-      gap:3px;
-      color:var(--muted-foreground);
-      font-size:7.5px;
-      line-height:1;
-      white-space:nowrap;
-    }
-    .${BLOCK_CLASS}-down{color:#43a7ff;font-size:9px}
-    .${BLOCK_CLASS}-up{color:#38e88c;font-size:9px}
-    .${BLOCK_CLASS}-net-value{
-      min-width:0;
-      color:var(--foreground);
-      font-size:9.5px;
-      line-height:1;
-      font-weight:700;
-      font-variant-numeric:tabular-nums;
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      text-align:right;
-    }
-    .${BLOCK_CLASS}-mini-spark{
-      grid-column:1/-1;
-      height:13px;
-      min-width:0;
-      opacity:.88;
     }
     .${BLOCK_CLASS}-error{color:var(--muted-foreground);font-size:9px;padding:.1rem 0}
 
@@ -209,36 +160,50 @@
       text-overflow:ellipsis;
       vertical-align:middle;
       font-variant-numeric:tabular-nums;
+      letter-spacing:.015em;
     }
     .${IP_BUTTON_CLASS}{
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      width:23px;
-      height:23px;
-      margin-left:4px;
-      padding:0;
-      border:0;
-      border-radius:7px;
-      background:transparent;
-      color:var(--muted-foreground);
-      vertical-align:middle;
-      cursor:pointer;
-      pointer-events:auto;
-      transition:background .15s ease,color .15s ease;
+      position:relative!important;
+      z-index:50!important;
+      display:inline-flex!important;
+      align-items:center!important;
+      justify-content:center!important;
+      width:24px!important;
+      height:24px!important;
+      margin-left:4px!important;
+      padding:0!important;
+      border:1px solid transparent!important;
+      border-radius:7px!important;
+      background:transparent!important;
+      color:var(--muted-foreground)!important;
+      vertical-align:middle!important;
+      cursor:pointer!important;
+      pointer-events:auto!important;
+      touch-action:manipulation!important;
+      transition:background .15s ease,color .15s ease,border-color .15s ease,transform .12s ease!important;
     }
-    .${IP_BUTTON_CLASS}:hover{background:color-mix(in srgb,var(--muted) 70%,transparent);color:var(--foreground)}
+    .${IP_BUTTON_CLASS} *{pointer-events:none!important}
+    .${IP_BUTTON_CLASS}:hover{
+      background:color-mix(in srgb,var(--muted) 72%,transparent)!important;
+      color:var(--foreground)!important;
+      border-color:color-mix(in srgb,var(--border) 78%,transparent)!important;
+    }
+    .${IP_BUTTON_CLASS}:active{transform:scale(.94)}
+    .${IP_BUTTON_CLASS}[data-hs-ip-state='shown']{
+      color:#38e88c!important;
+      background:rgba(56,232,140,.075)!important;
+      border-color:rgba(56,232,140,.14)!important;
+    }
     .${IP_BUTTON_CLASS}:focus-visible{outline:2px solid color-mix(in srgb,var(--primary) 65%,transparent);outline-offset:1px}
-    .${IP_BUTTON_CLASS} svg{width:13px;height:13px}
+    .${IP_BUTTON_CLASS} svg{width:14px;height:14px;display:block}
 
     @media(max-width:390px){
       .${BLOCK_CLASS}-resources{gap:6px}
-      .${BLOCK_CLASS}-metric{height:64px;padding:8px}
-      .${BLOCK_CLASS}-usage{font-size:8px}
-      .${BLOCK_CLASS}-chart-row{grid-template-columns:minmax(0,1fr) 31px;gap:5px}
-      .${BLOCK_CLASS}-network{grid-template-columns:auto 1fr 1fr;gap:6px;padding:7px 8px}
-      .${BLOCK_CLASS}-net-item{padding-left:7px}
-      .${BLOCK_CLASS}-network-title span{display:none}
+      .${BLOCK_CLASS}-metric{height:66px;padding:8px}
+      .${BLOCK_CLASS}-usage{font-size:7.8px}
+      .${BLOCK_CLASS}-chart-row{grid-template-columns:minmax(0,1fr) 31px;gap:5px;margin-top:6px}
+      .${BLOCK_CLASS}-spark{height:27px}
+      .${BLOCK_CLASS}-percent{font-size:10px}
     }
   `;
 
@@ -286,10 +251,6 @@
     return `${n.toFixed(digits)} ${units[unit]}`;
   }
 
-  function formatRate(value) {
-    return `${formatBytes(value)}/s`;
-  }
-
   function formatCoreValue(value) {
     const n = Math.max(0, Number(value) || 0);
     if (n >= 10) return n.toFixed(1);
@@ -303,7 +264,7 @@
     const bucket = history.get(id);
     if (!Array.isArray(bucket[key])) bucket[key] = [];
     bucket[key].push(Number(value) || 0);
-    if (bucket[key].length > 24) bucket[key].shift();
+    if (bucket[key].length > 26) bucket[key].shift();
   }
 
   function getHistory(nodeId, key) {
@@ -318,12 +279,10 @@
       const ramPct = stats.mem_total ? clamp((Number(stats.mem_used) / Number(stats.mem_total)) * 100) : 0;
       pushHistory(node.id, 'cpu', clamp(stats.cpu_usage));
       pushHistory(node.id, 'ram', ramPct);
-      pushHistory(node.id, 'rx', Number(stats.incoming_bandwidth_speed) || 0);
-      pushHistory(node.id, 'tx', Number(stats.outgoing_bandwidth_speed) || 0);
     }
   }
 
-  function smoothSeries(values, alpha = .42) {
+  function smoothSeries(values, alpha = .34) {
     const source = Array.isArray(values) && values.length ? values.map(v => Number(v) || 0) : [0, 0];
     if (source.length < 2) return source;
     const out = [source[0]];
@@ -333,10 +292,21 @@
     return out;
   }
 
-  function pointSeries(values, width, height, pad, fixedMin = null, fixedMax = null) {
+  function pointSeries(values, width, height, pad) {
     const source = smoothSeries(values);
-    const min = Number.isFinite(fixedMin) ? fixedMin : Math.min(...source);
-    const max = Number.isFinite(fixedMax) ? fixedMax : Math.max(...source);
+    let min = Math.max(0, Math.min(...source) - 5);
+    let max = Math.min(100, Math.max(...source) + 5);
+
+    if (max - min < 16) {
+      const middle = (min + max) / 2;
+      min = Math.max(0, middle - 8);
+      max = Math.min(100, middle + 8);
+      if (max - min < 16) {
+        if (min <= 0) max = Math.min(100, 16);
+        else if (max >= 100) min = Math.max(0, 84);
+      }
+    }
+
     const range = Math.max(1, max - min);
     const step = source.length > 1 ? (width - pad * 2) / (source.length - 1) : 0;
     return source.map((value, index) => ({
@@ -363,17 +333,16 @@
     return d;
   }
 
-  function spark(values, width = 180, height = 27, fixedPercentScale = false) {
-    const points = pointSeries(values, width, height, 2, fixedPercentScale ? 0 : null, fixedPercentScale ? 100 : null);
+  function spark(values, width = 180, height = 29) {
+    const points = pointSeries(values, width, height, 2);
     return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><path d="${smoothPath(points)}"/></svg>`;
   }
 
-  const icon = (path, size = 11) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+  const icon = (path, size = 11) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
   const cpuIcon = icon('<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>');
   const ramIcon = icon('<path d="M2 12h20M6 12v4M10 12v4M14 12v4M18 12v4M4 8h16a2 2 0 0 1 2 2v6H2v-6a2 2 0 0 1 2-2Z"/>');
-  const networkIcon = icon('<circle cx="12" cy="12" r="3"/><path d="M2 12h7M15 12h7M12 2v7M12 15v7"/>');
-  const eyeIcon = icon('<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>', 13);
-  const eyeOffIcon = icon('<path d="m3 3 18 18"/><path d="M10.6 6.2A9.8 9.8 0 0 1 12 6c6.5 0 10 6 10 6a16.4 16.4 0 0 1-3 3.8M6.5 6.5C3.7 8.1 2 12 2 12s3.5 6 10 6a9.9 9.9 0 0 0 4.1-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/>', 13);
+  const eyeOpenIcon = icon('<path d="M2.5 12s3.4-5.2 9.5-5.2 9.5 5.2 9.5 5.2-3.4 5.2-9.5 5.2S2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.6"/>', 14);
+  const eyeClosedIcon = icon('<path d="M3 12.8c2.3 2.1 5.3 3.2 9 3.2s6.7-1.1 9-3.2"/><path d="m6.1 15.2-1.2 1.7M9.8 16l-.4 2M14.2 16l.4 2M17.9 15.2l1.2 1.7"/>', 14);
 
   function findKnownCard(nodeId) {
     const id = String(nodeId);
@@ -405,8 +374,18 @@
     return [...direct.children].find(el => el.tagName === 'DIV' && el.classList.contains('min-w-0') && el.classList.contains('flex-1')) || null;
   }
 
-  function maskedEndpoint() {
-    return '••••••••••••••';
+  function syncIpVisual(span, button, id) {
+    if (!(span instanceof HTMLElement) || !(button instanceof HTMLElement)) return;
+    const endpoint = span.dataset.hsRealEndpoint || '';
+    if (!endpoint) return;
+
+    const shown = revealedIps.has(id);
+    span.textContent = shown ? endpoint : MASK;
+    button.dataset.hsIpState = shown ? 'shown' : 'hidden';
+    button.innerHTML = shown ? eyeOpenIcon : eyeClosedIcon;
+    button.setAttribute('aria-pressed', shown ? 'true' : 'false');
+    button.setAttribute('aria-label', shown ? 'Hide IP address' : 'Show IP address');
+    button.title = shown ? 'Hide IP' : 'Show IP';
   }
 
   function maskNodeIp(card, node) {
@@ -419,35 +398,43 @@
     span.classList.add(IP_CLASS);
     span.dataset.hsIpNodeId = id;
     span.dataset.hsRealEndpoint = endpoint;
-    span.textContent = revealedIps.has(id) ? endpoint : maskedEndpoint();
 
     let button = span.nextElementSibling;
     if (!button || !button.classList.contains(IP_BUTTON_CLASS) || button.dataset.hsIpNodeId !== id) {
+      if (button?.classList?.contains(IP_BUTTON_CLASS)) button.remove();
       button = document.createElement('button');
       button.type = 'button';
       button.className = IP_BUTTON_CLASS;
       button.dataset.hsIpNodeId = id;
       span.insertAdjacentElement('afterend', button);
-      button.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (revealedIps.has(id)) revealedIps.delete(id);
-        else revealedIps.add(id);
-        const targetSpan = button.previousElementSibling;
-        if (targetSpan?.classList.contains(IP_CLASS)) {
-          const shown = revealedIps.has(id);
-          targetSpan.textContent = shown ? targetSpan.dataset.hsRealEndpoint : maskedEndpoint();
-          button.innerHTML = shown ? eyeOffIcon : eyeIcon;
-          button.setAttribute('aria-label', shown ? 'Hide IP address' : 'Show IP address');
-          button.title = shown ? 'Hide IP' : 'Show IP';
-        }
-      });
     }
 
-    const shown = revealedIps.has(id);
-    button.innerHTML = shown ? eyeOffIcon : eyeIcon;
-    button.setAttribute('aria-label', shown ? 'Hide IP address' : 'Show IP address');
-    button.title = shown ? 'Hide IP' : 'Show IP';
+    syncIpVisual(span, button, id);
+  }
+
+  function handleIpPointerDown(event) {
+    const button = event.target instanceof Element ? event.target.closest(`.${IP_BUTTON_CLASS}`) : null;
+    if (!button) return;
+    event.stopPropagation();
+  }
+
+  function handleIpClick(event) {
+    const button = event.target instanceof Element ? event.target.closest(`.${IP_BUTTON_CLASS}`) : null;
+    if (!button) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+
+    const span = button.previousElementSibling;
+    if (!(span instanceof HTMLElement) || !span.classList.contains(IP_CLASS)) return;
+
+    const id = String(button.dataset.hsIpNodeId || span.dataset.hsIpNodeId || '');
+    if (!id) return;
+
+    if (revealedIps.has(id)) revealedIps.delete(id);
+    else revealedIps.add(id);
+    syncIpVisual(span, button, id);
   }
 
   function restoreIps() {
@@ -489,8 +476,6 @@
     const ramUsed = Number(stats.mem_used) || 0;
     const ramTotal = Number(stats.mem_total) || 0;
     const ramPct = ramTotal ? clamp((ramUsed / ramTotal) * 100) : 0;
-    const rx = Number(stats.incoming_bandwidth_speed) || 0;
-    const tx = Number(stats.outgoing_bandwidth_speed) || 0;
 
     const cpuPercent = `${cpu.toFixed(cpu < 10 ? 1 : 0)}%`;
     const ramPercent = `${ramPct.toFixed(ramPct < 10 ? 1 : 0)}%`;
@@ -505,7 +490,7 @@
             <div class="${BLOCK_CLASS}-usage" title="${cpuUsageText}">${cpuUsageText}</div>
           </div>
           <div class="${BLOCK_CLASS}-chart-row">
-            <div class="${BLOCK_CLASS}-spark green">${spark(getHistory(node.id, 'cpu'), 180, 27, true)}</div>
+            <div class="${BLOCK_CLASS}-spark green">${spark(getHistory(node.id, 'cpu'))}</div>
             <div class="${BLOCK_CLASS}-percent">${cpuPercent}</div>
           </div>
         </div>
@@ -516,25 +501,9 @@
             <div class="${BLOCK_CLASS}-usage" title="${ramUsageText}">${ramUsageText}</div>
           </div>
           <div class="${BLOCK_CLASS}-chart-row">
-            <div class="${BLOCK_CLASS}-spark purple">${spark(getHistory(node.id, 'ram'), 180, 27, true)}</div>
+            <div class="${BLOCK_CLASS}-spark purple">${spark(getHistory(node.id, 'ram'))}</div>
             <div class="${BLOCK_CLASS}-percent">${ramPercent}</div>
           </div>
-        </div>
-      </div>
-
-      <div class="${BLOCK_CLASS}-network">
-        <div class="${BLOCK_CLASS}-network-title">${networkIcon}<span>Network</span></div>
-
-        <div class="${BLOCK_CLASS}-net-item">
-          <div class="${BLOCK_CLASS}-net-label"><span class="${BLOCK_CLASS}-down">↓</span><span>RX</span></div>
-          <div class="${BLOCK_CLASS}-net-value">${formatRate(rx)}</div>
-          <div class="${BLOCK_CLASS}-mini-spark blue">${spark(getHistory(node.id, 'rx'), 120, 13)}</div>
-        </div>
-
-        <div class="${BLOCK_CLASS}-net-item">
-          <div class="${BLOCK_CLASS}-net-label"><span class="${BLOCK_CLASS}-up">↑</span><span>TX</span></div>
-          <div class="${BLOCK_CLASS}-net-value">${formatRate(tx)}</div>
-          <div class="${BLOCK_CLASS}-mini-spark green">${spark(getHistory(node.id, 'tx'), 120, 13)}</div>
         </div>
       </div>`;
 
@@ -609,6 +578,9 @@
 
   function start() {
     injectStyle();
+    document.addEventListener('pointerdown', handleIpPointerDown, true);
+    document.addEventListener('click', handleIpClick, true);
+
     observer = new MutationObserver(() => {
       if (enabled && onNodesPage()) queueRender();
     });
