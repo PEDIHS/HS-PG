@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const FEATURE_CARD_ID = 'hs-backup-web-card';
   const TAB_ID = 'hs-backup-settings-tab';
   const PANEL_ID = 'hs-backup-settings-panel';
@@ -376,11 +376,14 @@
 
   function activateBackup(fromHistory) {
     if (!enabled || !onSettingsPage()) return;
+    active = true;
     ensureSettingsTab();
     const {tabBar, header, nativeContent} = settingsParts();
-    if (!tabBar || !nativeContent) return;
+    if (!tabBar || !nativeContent) {
+      active = false;
+      return;
+    }
 
-    active = true;
     if (!fromHistory && !backupRequested()) setBackupRequested(true);
     if (!nativeContent.dataset.hsBackupDisplay) nativeContent.dataset.hsBackupDisplay = nativeContent.style.display || '__empty__';
     nativeContent.style.display = 'none';
@@ -720,6 +723,21 @@
       ensureFeatureCard();
       if (enabled) ensureSettingsTab();
       if (enabled && backupRequested() && onSettingsPage() && !active) activateBackup(true);
+      if (active && enabled && onSettingsPage()) {
+        const {header, nativeContent} = settingsParts();
+        if (nativeContent) {
+          if (!nativeContent.dataset.hsBackupDisplay) nativeContent.dataset.hsBackupDisplay = nativeContent.style.display || '__empty__';
+          nativeContent.style.display = 'none';
+          let panel = document.getElementById(PANEL_ID);
+          if (!panel) {
+            nativeContent.insertAdjacentHTML('afterend', panelMarkup());
+            panel = document.getElementById(PANEL_ID);
+            bindPanel();
+          }
+          alterHeader(header, true);
+          syncTabState();
+        }
+      }
       if ((!enabled || !onSettingsPage()) && active) restoreNativeView({clearQuery: !onSettingsPage()});
     });
   }
