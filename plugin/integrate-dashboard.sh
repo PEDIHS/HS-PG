@@ -10,31 +10,29 @@ PATCHER="${HS_ROOT}/plugin/patch_pasarguard.py"
 ADMIN_JS="${HS_ROOT}/plugin/hs-plugin.js"
 TAB_FIX_JS="${HS_ROOT}/plugin/hs-tab-fix.js"
 NODE_PRO_JS="${HS_ROOT}/plugin/hs-node-pro.js"
-NODE_IP_FIX_JS="${HS_ROOT}/plugin/hs-node-ip-fix.js"
 API_ADDON="${HS_ROOT}/backend/hs_plugin_api.py"
 RUNTIME="${HS_ROOT}/backend/hs_plugin_runtime.py"
 LOADER_MARKER="hs-plugin-loader"
 TAB_FIX_MARKER="hs-plugin-tab-fix-loader"
 NODE_PRO_MARKER="hs-plugin-node-pro-loader"
-NODE_IP_FIX_MARKER="hs-plugin-node-ip-fix-loader"
+LEGACY_NODE_IP_MARKER="hs-plugin-node-ip-fix-loader"
 
 log(){ printf '\033[1;33m[HS Plugin]\033[0m %s\n' "$*"; }
 warn(){ printf '\033[1;31m[HS Plugin]\033[0m %s\n' "$*" >&2; }
 sha12(){ sha256sum "$1" | awk '{print substr($1,1,12)}'; }
 
-for f in "$PATCHER" "$ADMIN_JS" "$TAB_FIX_JS" "$NODE_PRO_JS" "$NODE_IP_FIX_JS" "$API_ADDON" "$RUNTIME"; do
+for f in "$PATCHER" "$ADMIN_JS" "$TAB_FIX_JS" "$NODE_PRO_JS" "$API_ADDON" "$RUNTIME"; do
   [[ -s "$f" ]] || { warn "missing $f"; exit 1; }
 done
 mkdir -p "$DATA_DIR"
 
 inject_loaders_host(){
-  local html="$1" admin_version tab_version node_version ip_fix_version
+  local html="$1" admin_version tab_version node_version
   [[ -f "$html" ]] || return 0
   admin_version="$(sha12 "$ADMIN_JS")"
   tab_version="$(sha12 "$TAB_FIX_JS")"
   node_version="$(sha12 "$NODE_PRO_JS")"
-  ip_fix_version="$(sha12 "$NODE_IP_FIX_JS")"
-  python3 - "$html" "$LOADER_MARKER" "$admin_version" "$TAB_FIX_MARKER" "$tab_version" "$NODE_PRO_MARKER" "$node_version" "$NODE_IP_FIX_MARKER" "$ip_fix_version" <<'PY'
+  python3 - "$html" "$LOADER_MARKER" "$admin_version" "$TAB_FIX_MARKER" "$tab_version" "$NODE_PRO_MARKER" "$node_version" "$LEGACY_NODE_IP_MARKER" <<'PY'
 from pathlib import Path
 import re, sys
 p=Path(sys.argv[1]); old=p.read_text(encoding='utf-8')
@@ -42,8 +40,8 @@ entries=[
     (sys.argv[2], f'/statics/hs-plugin.js?v={sys.argv[3]}'),
     (sys.argv[4], f'/statics/hs-tab-fix.js?v={sys.argv[5]}'),
     (sys.argv[6], f'/statics/hs-node-pro.js?v={sys.argv[7]}'),
-    (sys.argv[8], f'/statics/hs-node-ip-fix.js?v={sys.argv[9]}'),
 ]
+legacy=[sys.argv[8]]
 new=old
 for marker, src in entries:
     tag=f'<script id="{marker}" src="{src}" defer></script>'
@@ -54,18 +52,20 @@ for marker, src in entries:
         new=re.sub(r'</body>',tag+'\n</body>',new,count=1,flags=re.I)
     else:
         new+='\n'+tag+'\n'
+for marker in legacy:
+    pat=re.compile(rf'<script\s+id=["\']{re.escape(marker)}["\'][^>]*>\s*</script>\s*',re.I)
+    new=pat.sub('',new)
 if new!=old: p.write_text(new,encoding='utf-8')
 PY
 }
 
 inject_loaders_container(){
-  local cid="$1" html="$2" admin_version tab_version node_version ip_fix_version
+  local cid="$1" html="$2" admin_version tab_version node_version
   admin_version="$(sha12 "$ADMIN_JS")"
   tab_version="$(sha12 "$TAB_FIX_JS")"
   node_version="$(sha12 "$NODE_PRO_JS")"
-  ip_fix_version="$(sha12 "$NODE_IP_FIX_JS")"
   docker exec "$cid" test -f "$html" >/dev/null 2>&1 || return 0
-  docker exec -i "$cid" python3 - "$html" "$LOADER_MARKER" "$admin_version" "$TAB_FIX_MARKER" "$tab_version" "$NODE_PRO_MARKER" "$node_version" "$NODE_IP_FIX_MARKER" "$ip_fix_version" <<'PY'
+  docker exec -i "$cid" python3 - "$html" "$LOADER_MARKER" "$admin_version" "$TAB_FIX_MARKER" "$tab_version" "$NODE_PRO_MARKER" "$node_version" "$LEGACY_NODE_IP_MARKER" <<'PY'
 from pathlib import Path
 import re, sys
 p=Path(sys.argv[1]); old=p.read_text(encoding='utf-8')
@@ -73,8 +73,8 @@ entries=[
     (sys.argv[2], f'/statics/hs-plugin.js?v={sys.argv[3]}'),
     (sys.argv[4], f'/statics/hs-tab-fix.js?v={sys.argv[5]}'),
     (sys.argv[6], f'/statics/hs-node-pro.js?v={sys.argv[7]}'),
-    (sys.argv[8], f'/statics/hs-node-ip-fix.js?v={sys.argv[9]}'),
 ]
+legacy=[sys.argv[8]]
 new=old
 for marker, src in entries:
     tag=f'<script id="{marker}" src="{src}" defer></script>'
@@ -85,6 +85,9 @@ for marker, src in entries:
         new=re.sub(r'</body>',tag+'\n</body>',new,count=1,flags=re.I)
     else:
         new+='\n'+tag+'\n'
+for marker in legacy:
+    pat=re.compile(rf'<script\s+id=["\']{re.escape(marker)}["\'][^>]*>\s*</script>\s*',re.I)
+    new=pat.sub('',new)
 if new!=old: p.write_text(new,encoding='utf-8')
 PY
 }
@@ -116,7 +119,7 @@ integrate_host(){
     install -m 0644 "$ADMIN_JS" "$build/statics/hs-plugin.js"
     install -m 0644 "$TAB_FIX_JS" "$build/statics/hs-tab-fix.js"
     install -m 0644 "$NODE_PRO_JS" "$build/statics/hs-node-pro.js"
-    install -m 0644 "$NODE_IP_FIX_JS" "$build/statics/hs-node-ip-fix.js"
+    rm -f "$build/statics/hs-node-ip-fix.js"
     inject_loaders_host "$build/index.html"
     inject_loaders_host "$build/404.html"
     log "dashboard loaders healthy at $build"
@@ -159,7 +162,7 @@ integrate_container(){
     docker cp "$ADMIN_JS" "$cid:$build/statics/hs-plugin.js" >/dev/null
     docker cp "$TAB_FIX_JS" "$cid:$build/statics/hs-tab-fix.js" >/dev/null
     docker cp "$NODE_PRO_JS" "$cid:$build/statics/hs-node-pro.js" >/dev/null
-    docker cp "$NODE_IP_FIX_JS" "$cid:$build/statics/hs-node-ip-fix.js" >/dev/null
+    docker exec "$cid" rm -f "$build/statics/hs-node-ip-fix.js" >/dev/null 2>&1 || true
     inject_loaders_container "$cid" "$build/index.html"
     inject_loaders_container "$cid" "$build/404.html"
     log "dashboard loaders healthy in ${cid:0:12} ($build)"
