@@ -1,29 +1,30 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.0.1';
+  const VERSION = '1.1.0';
   const FEATURE_CARD_ID = 'hs-backup-web-card';
   const TAB_ID = 'hs-backup-settings-tab';
   const PANEL_ID = 'hs-backup-settings-panel';
   const MODAL_ID = 'hs-backup-confirm-modal';
   const QUERY_KEY = 'hs_backup';
+  const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024;
   const rawFetch = window.fetch.bind(window);
 
   let enabled = false;
   let active = false;
-  let selectedFile = null;
+  let selectedFiles = [];
+  let selectedSummary = null;
   let observer = null;
   let queued = false;
   let featureBusy = false;
-  let exportBusy = false;
-  let importBusy = false;
+  let operationBusy = null;
   let statusTimer = null;
 
   const icon = (body, size = 16) =>
     `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 
   const backupIcon = icon('<path d="M4 7V4h16v3"/><path d="M5 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><path d="M9 11h6M12 11v5"/><path d="m9.5 13.5 2.5 2.5 2.5-2.5"/>');
-  const exportIcon = icon('<path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 14v5h14v-5"/>', 17);
+  const exportIcon = icon('<path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 15v4h14v-4"/>', 17);
   const importIcon = icon('<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/>', 17);
   const fileIcon = icon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/>', 18);
   const checkIcon = icon('<path d="m5 12 4 4L19 6"/>', 14);
@@ -58,11 +59,12 @@
         filter:drop-shadow(0 0 4px rgba(218,170,66,.14));
       }
       #${PANEL_ID} .hs-backup-drop{
-        transition:border-color .15s ease,background-color .15s ease;
+        transition:border-color .15s ease,background-color .15s ease,box-shadow .15s ease;
       }
       #${PANEL_ID} .hs-backup-drop[data-dragging="true"]{
-        border-color:var(--primary);
-        background:color-mix(in srgb,var(--accent) 58%,transparent);
+        border-color:#d9aa42;
+        background:rgba(217,170,66,.06);
+        box-shadow:0 0 0 1px rgba(217,170,66,.12) inset;
       }
       #${PANEL_ID} button:disabled{cursor:not-allowed;opacity:.55}
       @media(prefers-reduced-motion:reduce){
@@ -79,7 +81,7 @@
   }
 
   async function api(path, options = {}) {
-    const { headers: supplied, ...rest } = options;
+    const {headers: supplied, ...rest} = options;
     const response = await rawFetch(`/api/hs-plugin/backup${path}`, {
       credentials: 'same-origin',
       cache: 'no-store',
@@ -146,7 +148,7 @@
     syncSwitch(button, next);
 
     const status = document.querySelector('#hs-tab-status');
-    if (status) status.textContent = `Applying Web Backup…`;
+    if (status) status.textContent = 'Applying Web Backup…';
     try {
       const data = await api('/feature', {
         method: 'PUT',
@@ -284,11 +286,8 @@
     const tab = document.getElementById(TAB_ID);
     if (!tabBar || !tab) return;
     [...tabBar.children].forEach(button => {
-      if (button.id === TAB_ID) {
-        normalizeNativeButton(button, active);
-      } else if (active) {
-        normalizeNativeButton(button, false);
-      }
+      if (button.id === TAB_ID) normalizeNativeButton(button, active);
+      else if (active) normalizeNativeButton(button, false);
     });
   }
 
@@ -303,7 +302,7 @@
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="space-y-1">
               <h3 class="text-base font-semibold sm:text-lg">Backup management</h3>
-              <p class="text-muted-foreground max-w-3xl text-xs leading-relaxed sm:text-sm">Uses PasarGuard's native backup and restore engine. Backup files are generated on demand and never exposed publicly.</p>
+              <p class="text-muted-foreground max-w-3xl text-xs leading-relaxed sm:text-sm">Uses PasarGuard's native backup and restore engine. HS only provides a secure web bridge and keeps its own runtime secrets out of exported archives.</p>
             </div>
             <div id="hs-backup-agent-state" class="text-muted-foreground inline-flex items-center gap-2 text-xs">
               <span class="bg-muted-foreground/50 h-2 w-2 rounded-full"></span>
@@ -319,7 +318,7 @@
                     <span class="text-muted-foreground">${exportIcon}</span>
                     <h4 class="font-semibold">Export Backup</h4>
                   </div>
-                  <p class="text-muted-foreground text-xs leading-relaxed sm:text-sm">Create a fresh full PasarGuard backup and download it immediately. Large native split backups are packaged into one HS ZIP automatically.</p>
+                  <p class="text-muted-foreground text-xs leading-relaxed sm:text-sm">Create a fresh full PasarGuard backup and download it immediately. Native split backups are recombined into one standard ZIP automatically.</p>
                 </div>
 
                 <div class="bg-muted/25 mt-auto rounded-lg border p-3">
@@ -344,15 +343,15 @@
                     <span class="text-muted-foreground">${importIcon}</span>
                     <h4 class="font-semibold">Import Backup</h4>
                   </div>
-                  <p class="text-muted-foreground text-xs leading-relaxed sm:text-sm">Upload a PasarGuard ZIP backup or an HS export. Import validates the archive first, then runs the native restore process on the host.</p>
+                  <p class="text-muted-foreground text-xs leading-relaxed sm:text-sm">Import a normal PasarGuard ZIP or select all files of a native split backup. HS validates the set, then hands it to PasarGuard's own restore flow.</p>
                 </div>
 
-                <input id="hs-backup-file-input" type="file" accept=".zip,application/zip" class="hidden">
+                <input id="hs-backup-file-input" type="file" multiple class="hidden">
                 <button id="hs-backup-drop" type="button" class="hs-backup-drop bg-muted/15 flex min-h-[104px] w-full items-center gap-3 rounded-lg border border-dashed p-3 text-left">
                   <span class="text-muted-foreground shrink-0">${fileIcon}</span>
                   <span class="min-w-0">
-                    <span id="hs-backup-file-title" class="block truncate text-sm font-medium">Choose a backup file</span>
-                    <span id="hs-backup-file-detail" class="text-muted-foreground mt-1 block text-xs">ZIP only · up to 1 GB · drag & drop supported</span>
+                    <span id="hs-backup-file-title" class="block truncate text-sm font-medium">Choose backup file or parts</span>
+                    <span id="hs-backup-file-detail" class="text-muted-foreground mt-1 block text-xs">ZIP / .partNN.zip / split ZIP · up to 8 GB total · drag & drop supported</span>
                   </span>
                 </button>
 
@@ -368,7 +367,7 @@
           </div>
 
           <div class="bg-muted/20 text-muted-foreground rounded-lg border px-3 py-2.5 text-xs leading-relaxed">
-            Import can restart or recreate PasarGuard services while restoring configuration and database data. The dashboard may disconnect temporarily; HS keeps the restore job on the host and reconnects automatically.
+            Import replaces PasarGuard database/configuration through its native restore command and can temporarily disconnect the dashboard. HS preserves the destination HS state and backup-agent credentials across that restore, then reconnects automatically.
           </div>
         </div>
       </section>`;
@@ -378,8 +377,8 @@
     if (!enabled || !onSettingsPage()) return;
     active = true;
     ensureSettingsTab();
-    const {tabBar, header, nativeContent} = settingsParts();
-    if (!tabBar || !nativeContent) {
+    const {header, nativeContent} = settingsParts();
+    if (!nativeContent) {
       active = false;
       return;
     }
@@ -397,6 +396,7 @@
     panel.style.display = '';
     alterHeader(header, true);
     syncTabState();
+    syncActionButtons();
     refreshAgentStatus();
   }
 
@@ -437,11 +437,15 @@
     const box = document.getElementById('hs-backup-agent-state');
     if (!box) return;
     const dotClass = kind === 'ok' ? 'bg-green-500' : kind === 'busy' ? 'bg-amber-500' : kind === 'error' ? 'bg-destructive' : 'bg-muted-foreground/50';
-    box.innerHTML = `<span class="${dotClass} h-2 w-2 rounded-full"></span><span>${text}</span>`;
+    box.innerHTML = `<span class="${dotClass} h-2 w-2 rounded-full"></span><span>${escapeHtml(text)}</span>`;
   }
 
   async function refreshAgentStatus() {
     if (!enabled || !active) return;
+    if (operationBusy) {
+      setAgentState('busy', operationBusy === 'export' ? 'Creating backup' : 'Import in progress');
+      return;
+    }
     try {
       const data = await api('/status');
       if (!data.available) setAgentState('error', 'Backup service unavailable');
@@ -452,39 +456,97 @@
     }
   }
 
-  function setSelectedFile(file) {
-    if (!file) {
-      selectedFile = null;
-      const title = document.getElementById('hs-backup-file-title');
-      const detail = document.getElementById('hs-backup-file-detail');
-      if (title) title.textContent = 'Choose a backup file';
-      if (detail) detail.textContent = 'ZIP only · up to 1 GB · drag & drop supported';
-      const button = document.getElementById('hs-backup-import');
-      if (button) button.disabled = true;
-      return;
+  function parseSelection(files) {
+    const list = [...files].filter(Boolean);
+    if (!list.length) throw new Error('Choose a PasarGuard backup file.');
+    const total = list.reduce((sum, file) => sum + Number(file.size || 0), 0);
+    if (total <= 0) throw new Error('The selected backup is empty.');
+    if (total > MAX_UPLOAD_BYTES) throw new Error('The selected backup is larger than 8 GB total.');
+
+    const partRe = /^(.*)\.part(\d{2})\.zip$/i;
+    const zRe = /^(.*)\.z(\d{2})$/i;
+
+    if (list.length === 1) {
+      const file = list[0];
+      if (partRe.test(file.name)) throw new Error('Select all .partNN.zip files belonging to this backup.');
+      if (zRe.test(file.name)) throw new Error('Select the main .zip file together with every .zNN part.');
+      if (!file.name.toLowerCase().endsWith('.zip')) throw new Error('Select a PasarGuard ZIP backup.');
+      return {files: list, total, title: file.name, detail: `${formatBytes(total)} · Ready to import`, kind: 'single'};
     }
-    if (!file.name.toLowerCase().endsWith('.zip')) {
-      setImportStatus('error', 'Select a ZIP backup file.');
-      return;
+
+    const nativeParts = list.map(file => ({file, match: file.name.match(partRe)}));
+    if (nativeParts.every(item => item.match)) {
+      const base = nativeParts[0].match[1].toLowerCase();
+      if (!nativeParts.every(item => item.match[1].toLowerCase() === base)) throw new Error('All .partNN.zip files must belong to the same backup.');
+      const nums = nativeParts.map(item => Number(item.match[2])).sort((a, b) => a - b);
+      const start = nums[0];
+      if (![0, 1].includes(start)) throw new Error('Split backup must start with part00 or part01.');
+      for (let i = 0; i < nums.length; i += 1) {
+        if (nums[i] !== start + i) throw new Error('One or more .partNN.zip files are missing.');
+      }
+      return {
+        files: list,
+        total,
+        title: `${nativeParts[0].match[1]} · ${list.length} parts`,
+        detail: `${formatBytes(total)} total · Complete native split backup`,
+        kind: 'native-parts',
+      };
     }
-    if (file.size > 1024 * 1024 * 1024) {
-      setImportStatus('error', 'The selected file is larger than 1 GB.');
-      return;
+
+    const mainZips = list.filter(file => file.name.toLowerCase().endsWith('.zip') && !partRe.test(file.name));
+    const zParts = list.map(file => ({file, match: file.name.match(zRe)})).filter(item => item.match);
+    if (mainZips.length === 1 && zParts.length === list.length - 1 && zParts.length > 0) {
+      const mainBase = mainZips[0].name.slice(0, -4).toLowerCase();
+      if (!zParts.every(item => item.match[1].toLowerCase() === mainBase)) throw new Error('The .zNN parts do not match the selected main ZIP.');
+      const nums = zParts.map(item => Number(item.match[2])).sort((a, b) => a - b);
+      for (let i = 0; i < nums.length; i += 1) {
+        if (nums[i] !== i + 1) throw new Error('One or more .zNN split files are missing.');
+      }
+      return {
+        files: list,
+        total,
+        title: `${mainZips[0].name} · ${list.length} files`,
+        detail: `${formatBytes(total)} total · Complete split ZIP backup`,
+        kind: 'zip-parts',
+      };
     }
-    selectedFile = file;
+
+    throw new Error('Select one ZIP, all .partNN.zip files, or a main ZIP with all .zNN parts from the same backup.');
+  }
+
+  function resetSelection() {
+    selectedFiles = [];
+    selectedSummary = null;
+    const input = document.getElementById('hs-backup-file-input');
+    if (input) input.value = '';
     const title = document.getElementById('hs-backup-file-title');
     const detail = document.getElementById('hs-backup-file-detail');
-    if (title) title.textContent = file.name;
-    if (detail) detail.textContent = `${formatBytes(file.size)} · Ready to import`;
-    const button = document.getElementById('hs-backup-import');
-    if (button) button.disabled = importBusy;
-    setImportStatus('muted', 'Backup selected. Review and press Import.');
+    if (title) title.textContent = 'Choose backup file or parts';
+    if (detail) detail.textContent = 'ZIP / .partNN.zip / split ZIP · up to 8 GB total · drag & drop supported';
+    syncActionButtons();
+  }
+
+  function setSelectedFiles(files) {
+    try {
+      const summary = parseSelection(files);
+      selectedFiles = summary.files;
+      selectedSummary = summary;
+      const title = document.getElementById('hs-backup-file-title');
+      const detail = document.getElementById('hs-backup-file-detail');
+      if (title) title.textContent = summary.title;
+      if (detail) detail.textContent = summary.detail;
+      setImportStatus('muted', 'Backup selected. Review and press Import.');
+    } catch (error) {
+      resetSelection();
+      setImportStatus('error', error.message || 'Invalid backup selection.');
+    }
+    syncActionButtons();
   }
 
   function statusHtml(kind, text) {
     const iconHtml = kind === 'busy' ? spinnerIcon : kind === 'ok' ? checkIcon : '';
     const cls = kind === 'error' ? 'text-destructive' : kind === 'ok' ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground';
-    return `<span class="${cls} inline-flex items-center gap-1.5">${iconHtml}<span>${text}</span></span>`;
+    return `<span class="${cls} inline-flex items-center gap-1.5">${iconHtml}<span>${escapeHtml(text)}</span></span>`;
   }
 
   function setExportStatus(kind, text) {
@@ -497,11 +559,17 @@
     if (el) el.innerHTML = statusHtml(kind, text);
   }
 
+  function syncActionButtons() {
+    const exportButton = document.getElementById('hs-backup-export');
+    const importButton = document.getElementById('hs-backup-import');
+    if (exportButton) exportButton.disabled = !!operationBusy;
+    if (importButton) importButton.disabled = !!operationBusy || selectedFiles.length === 0;
+  }
+
   async function exportBackup() {
-    if (exportBusy || !enabled) return;
-    exportBusy = true;
-    const button = document.getElementById('hs-backup-export');
-    if (button) button.disabled = true;
+    if (operationBusy || !enabled) return;
+    operationBusy = 'export';
+    syncActionButtons();
     setExportStatus('busy', 'Creating fresh backup…');
     setAgentState('busy', 'Creating backup');
 
@@ -511,47 +579,75 @@
         headers: {'Content-Type': 'application/json'},
         body: '{}',
       });
-      setExportStatus('busy', 'Preparing download…');
+      setExportStatus('busy', 'Starting download…');
 
-      const response = await rawFetch(`/api/hs-plugin/backup/download/${encodeURIComponent(info.id)}`, {
-        credentials: 'same-origin',
-        cache: 'no-store',
-        headers: headers(),
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.detail || `Download failed (HTTP ${response.status})`);
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+      let downloadUrl = `/api/hs-plugin/backup/download/${encodeURIComponent(info.id)}`;
       try {
+        const ticket = await api(`/ticket/${encodeURIComponent(info.id)}`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: '{}',
+        });
+        if (ticket?.ticket) {
+          downloadUrl = `/api/hs-plugin/backup/download-ticketed/${encodeURIComponent(info.id)}?ticket=${encodeURIComponent(ticket.ticket)}`;
+        }
+      } catch (_) {
+        // Compatibility with an older backend: use authenticated fetch below.
+      }
+
+      if (downloadUrl.includes('/download-ticketed/')) {
         const link = document.createElement('a');
-        link.href = url;
+        link.href = downloadUrl;
         link.download = info.filename || 'pasarguard-backup.zip';
         link.style.display = 'none';
         document.body.appendChild(link);
         link.click();
         link.remove();
-      } finally {
-        setTimeout(() => URL.revokeObjectURL(url), 30000);
+      } else {
+        const response = await rawFetch(downloadUrl, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: headers(),
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.detail || `Download failed (HTTP ${response.status})`);
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        try {
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = info.filename || 'pasarguard-backup.zip';
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+        } finally {
+          setTimeout(() => URL.revokeObjectURL(url), 30000);
+        }
       }
 
       const meta = document.getElementById('hs-backup-export-meta');
-      if (meta) {
-        meta.textContent = `${info.filename || 'Backup'} · ${formatBytes(info.size)}${info.split_source ? ' · packaged from native split backup' : ''}`;
-      }
-      setExportStatus('ok', 'Backup downloaded.');
+      if (meta) meta.textContent = `${info.filename || 'Backup'} · ${formatBytes(info.size)}${info.split_source ? ' · recombined from native split backup' : ''}`;
+      setExportStatus('ok', 'Backup ready and download started.');
     } catch (error) {
       setExportStatus('error', error.message || 'Backup export failed.');
     } finally {
-      exportBusy = false;
-      if (button) button.disabled = false;
+      operationBusy = null;
+      syncActionButtons();
       refreshAgentStatus();
     }
   }
 
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
+    })[char]);
+  }
+
   function openConfirm() {
-    if (!selectedFile || importBusy) return;
+    if (!selectedFiles.length || !selectedSummary || operationBusy) return;
     document.getElementById(MODAL_ID)?.remove();
     const overlay = document.createElement('div');
     overlay.id = MODAL_ID;
@@ -560,11 +656,11 @@
       <div role="dialog" aria-modal="true" aria-labelledby="hs-backup-confirm-title" class="bg-background text-foreground w-full max-w-md rounded-xl border p-5 shadow-2xl sm:p-6">
         <div class="space-y-2">
           <h3 id="hs-backup-confirm-title" class="text-lg font-semibold">Import this backup?</h3>
-          <p class="text-muted-foreground text-sm leading-relaxed">PasarGuard will validate <span class="text-foreground font-medium">${escapeHtml(selectedFile.name)}</span> and then run its native restore process. Current database and configuration can be replaced.</p>
+          <p class="text-muted-foreground text-sm leading-relaxed">PasarGuard will validate the selected backup and run its native restore process. Current database and configuration can be replaced.</p>
         </div>
         <div class="bg-muted/25 mt-4 rounded-lg border p-3 text-xs">
-          <div class="font-medium">${escapeHtml(selectedFile.name)}</div>
-          <div class="text-muted-foreground mt-1">${formatBytes(selectedFile.size)}</div>
+          <div class="truncate font-medium">${escapeHtml(selectedSummary.title)}</div>
+          <div class="text-muted-foreground mt-1">${escapeHtml(selectedSummary.detail)}</div>
         </div>
         <div class="mt-5 flex justify-end gap-2">
           <button id="hs-backup-confirm-cancel" type="button" class="${buttonClass()}">Cancel</button>
@@ -582,31 +678,24 @@
     });
   }
 
-  function escapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, char => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
-    })[char]);
-  }
-
   async function importBackup() {
-    if (!selectedFile || importBusy || !enabled) return;
-    importBusy = true;
-    const file = selectedFile;
-    const button = document.getElementById('hs-backup-import');
-    if (button) button.disabled = true;
-    setImportStatus('busy', `Uploading ${formatBytes(file.size)}…`);
+    if (!selectedFiles.length || operationBusy || !enabled) return;
+    operationBusy = 'import';
+    const files = [...selectedFiles];
+    const total = files.reduce((sum, file) => sum + file.size, 0);
+    syncActionButtons();
+    setImportStatus('busy', `Uploading ${files.length > 1 ? `${files.length} parts · ` : ''}${formatBytes(total)}…`);
     setAgentState('busy', 'Import in progress');
 
     try {
+      const form = new FormData();
+      files.forEach(file => form.append('files', file, file.name));
       const response = await rawFetch('/api/hs-plugin/backup/import', {
         method: 'POST',
         credentials: 'same-origin',
         cache: 'no-store',
-        headers: headers({
-          'Content-Type': 'application/octet-stream',
-          'X-HS-Backup-Filename': encodeURIComponent(file.name),
-        }),
-        body: file,
+        headers: headers(),
+        body: form,
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || `Upload failed (HTTP ${response.status})`);
@@ -614,11 +703,12 @@
 
       setImportStatus('busy', 'Backup uploaded. Native restore is starting…');
       await pollJob(data.job_id);
+      resetSelection();
     } catch (error) {
       setImportStatus('error', error.message || 'Backup import failed.');
     } finally {
-      importBusy = false;
-      if (button) button.disabled = !selectedFile;
+      operationBusy = null;
+      syncActionButtons();
       refreshAgentStatus();
     }
   }
@@ -656,7 +746,7 @@
         consecutiveErrors += 1;
         if (consecutiveErrors <= 2 && !navigator.onLine) {
           setImportStatus('busy', 'Connection interrupted. Waiting for PasarGuard…');
-        } else if (consecutiveErrors <= 12) {
+        } else if (consecutiveErrors <= 18) {
           setImportStatus('busy', 'PasarGuard may be restarting. Reconnecting…');
         } else {
           throw error;
@@ -673,7 +763,7 @@
     document.getElementById('hs-backup-export')?.addEventListener('click', exportBackup);
     document.getElementById('hs-backup-import')?.addEventListener('click', openConfirm);
     drop?.addEventListener('click', () => input?.click());
-    input?.addEventListener('change', () => setSelectedFile(input.files?.[0] || null));
+    input?.addEventListener('change', () => setSelectedFiles(input.files || []));
 
     drop?.addEventListener('dragover', event => {
       event.preventDefault();
@@ -685,10 +775,11 @@
     drop?.addEventListener('drop', event => {
       event.preventDefault();
       drop.dataset.dragging = 'false';
-      setSelectedFile(event.dataTransfer?.files?.[0] || null);
+      setSelectedFiles(event.dataTransfer?.files || []);
     });
 
-    if (selectedFile) setSelectedFile(selectedFile);
+    if (selectedFiles.length) setSelectedFiles(selectedFiles);
+    syncActionButtons();
   }
 
   function setEnabled(value) {
@@ -711,6 +802,7 @@
       const data = await api('/feature');
       setEnabled(!!data.enabled);
     } catch (error) {
+      ensureFeatureCard();
       console.warn('[HS Backup] feature state unavailable', error);
     }
   }
