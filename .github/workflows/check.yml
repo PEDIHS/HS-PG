@@ -15,15 +15,17 @@ jobs:
           node-version: '22'
       - name: Syntax and behavior checks
         run: |
-          python -m py_compile backend/*.py plugin/patch_pasarguard.py plugin/patch_backup_api.py tests/*.py
+          python -m py_compile backend/*.py plugin/patch_pasarguard.py plugin/patch_backup_api.py plugin/patch_shield_api.py tests/*.py
           python tests/test_runtime.py
           python tests/test_patcher.py
           python tests/test_backup_agent.py
           python tests/test_admin_time.py
+          python tests/test_shield_agent.py
           node --check plugin/hs-plugin.js
           node --check plugin/hs-tab-fix.js
           node --check plugin/hs-node-pro.js
           node --check plugin/hs-backup.js
           node --check plugin/hs-backup-tab-watchdog.js
           node --check plugin/hs-admin-time.js
-          bash -n install.sh cli/hs-pg plugin/integrate-dashboard.sh
+          node --check plugin/hs-shield.js
+          bash -n install.sh cli/hs-pg plugin/integrate-dashboard.sh plugin/integrate-shield.sh
