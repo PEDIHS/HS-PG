@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.5.0';
+  const VERSION = '0.6.0';
   const STYLE_ID = 'hs-node-pro-style';
   const BLOCK_CLASS = 'hs-node-pro';
   const CARD_CLASS = 'hs-node-pro-card';
@@ -28,40 +28,38 @@
       transition:border-color .2s ease,box-shadow .2s ease!important;
     }
     .${CARD_CLASS}:hover{
-      border-color:color-mix(in srgb,var(--border) 72%,#38e88c 28%)!important;
-      box-shadow:0 10px 28px rgba(0,0,0,.13)!important;
+      border-color:color-mix(in srgb,var(--border) 76%,#38e88c 24%)!important;
+      box-shadow:0 8px 24px rgba(0,0,0,.11)!important;
     }
     .${BLOCK_CLASS}{
-      margin-top:.72rem;
-      padding-top:.72rem;
-      border-top:1px solid color-mix(in srgb,var(--border) 78%,transparent);
+      margin-top:.58rem;
+      padding-top:.58rem;
+      border-top:1px solid color-mix(in srgb,var(--border) 80%,transparent);
       color:var(--foreground);
       pointer-events:none;
       min-width:0;
     }
-    .${BLOCK_CLASS}-grid{
+    .${BLOCK_CLASS}-resources{
       display:grid;
       grid-template-columns:minmax(0,1fr) minmax(0,1fr);
-      gap:8px;
+      gap:7px;
       min-width:0;
     }
     .${BLOCK_CLASS}-metric{
-      position:relative;
       min-width:0;
-      height:78px;
-      padding:10px 11px;
+      height:66px;
+      padding:9px 10px 8px;
       overflow:hidden;
-      border:1px solid color-mix(in srgb,var(--border) 82%,transparent);
-      border-radius:12px;
-      background:linear-gradient(145deg,color-mix(in srgb,var(--card) 96%,#17212c 4%),color-mix(in srgb,var(--card) 98%,#090d12 2%));
-      box-shadow:inset 0 1px rgba(255,255,255,.018);
+      border:1px solid color-mix(in srgb,var(--border) 84%,transparent);
+      border-radius:11px;
+      background:linear-gradient(145deg,color-mix(in srgb,var(--card) 97%,#17212c 3%),color-mix(in srgb,var(--card) 99%,#090d12 1%));
+      box-shadow:inset 0 1px rgba(255,255,255,.015);
     }
-    .${BLOCK_CLASS}-metric.wide{height:86px}
     .${BLOCK_CLASS}-head{
       display:flex;
-      align-items:flex-start;
+      align-items:center;
       justify-content:space-between;
-      gap:7px;
+      gap:8px;
       min-width:0;
     }
     .${BLOCK_CLASS}-title{
@@ -70,120 +68,136 @@
       gap:5px;
       min-width:0;
       color:var(--muted-foreground);
-      font-size:10px;
+      font-size:9.5px;
       line-height:1;
       font-weight:650;
       letter-spacing:.01em;
       white-space:nowrap;
     }
-    .${BLOCK_CLASS}-title svg{width:12px;height:12px;flex:none}
-    .${BLOCK_CLASS}-value{
+    .${BLOCK_CLASS}-title svg{width:11px;height:11px;flex:none}
+    .${BLOCK_CLASS}-usage{
       min-width:0;
-      color:var(--foreground);
-      font-size:12px;
+      color:color-mix(in srgb,var(--foreground) 88%,var(--muted-foreground) 12%);
+      font-size:9px;
       line-height:1;
-      font-weight:700;
+      font-weight:600;
       font-variant-numeric:tabular-nums;
       white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
       text-align:right;
     }
-    .${BLOCK_CLASS}-sub{
-      display:block;
-      margin-top:4px;
-      color:var(--muted-foreground);
-      font-size:8.5px;
-      line-height:1;
-      font-weight:500;
+    .${BLOCK_CLASS}-chart-row{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) 34px;
+      align-items:end;
+      gap:7px;
+      margin-top:7px;
+      min-width:0;
     }
     .${BLOCK_CLASS}-spark{
+      position:relative;
+      height:27px;
+      min-width:0;
+      overflow:hidden;
+      border-radius:7px;
+      background:linear-gradient(180deg,transparent 0%,color-mix(in srgb,var(--muted) 23%,transparent) 100%);
+    }
+    .${BLOCK_CLASS}-spark::after{
+      content:'';
       position:absolute;
-      left:10px;
-      right:10px;
-      bottom:8px;
-      height:28px;
-      opacity:.92;
+      left:0;
+      right:0;
+      bottom:1px;
+      height:1px;
+      background:color-mix(in srgb,var(--border) 58%,transparent);
     }
     .${BLOCK_CLASS}-spark svg,
     .${BLOCK_CLASS}-mini-spark svg{display:block;width:100%;height:100%;overflow:visible}
     .${BLOCK_CLASS}-spark path,
     .${BLOCK_CLASS}-mini-spark path{
       fill:none;
-      stroke-width:2.1;
+      stroke-width:2;
       stroke-linecap:round;
       stroke-linejoin:round;
+      vector-effect:non-scaling-stroke;
     }
-    .${BLOCK_CLASS}-spark.green path,.${BLOCK_CLASS}-mini-spark.green path{stroke:#38e88c;filter:drop-shadow(0 0 3px rgba(56,232,140,.27))}
-    .${BLOCK_CLASS}-spark.purple path,.${BLOCK_CLASS}-mini-spark.purple path{stroke:#9c86ff;filter:drop-shadow(0 0 3px rgba(156,134,255,.24))}
-    .${BLOCK_CLASS}-spark.blue path,.${BLOCK_CLASS}-mini-spark.blue path{stroke:#43a7ff;filter:drop-shadow(0 0 3px rgba(67,167,255,.24))}
-    .${BLOCK_CLASS}-dual{
+    .${BLOCK_CLASS}-spark.green path,.${BLOCK_CLASS}-mini-spark.green path{stroke:#38e88c;filter:drop-shadow(0 0 2.5px rgba(56,232,140,.24))}
+    .${BLOCK_CLASS}-spark.purple path,.${BLOCK_CLASS}-mini-spark.purple path{stroke:#9c86ff;filter:drop-shadow(0 0 2.5px rgba(156,134,255,.22))}
+    .${BLOCK_CLASS}-spark.blue path,.${BLOCK_CLASS}-mini-spark.blue path{stroke:#43a7ff;filter:drop-shadow(0 0 2.5px rgba(67,167,255,.22))}
+    .${BLOCK_CLASS}-percent{
+      align-self:center;
+      color:var(--foreground);
+      font-size:11px;
+      line-height:1;
+      font-weight:700;
+      font-variant-numeric:tabular-nums;
+      text-align:right;
+      white-space:nowrap;
+    }
+    .${BLOCK_CLASS}-network{
       display:grid;
-      grid-template-columns:minmax(0,1fr) minmax(0,1fr);
-      gap:0;
-      margin-top:10px;
+      grid-template-columns:auto minmax(0,1fr) minmax(0,1fr);
+      align-items:center;
+      gap:10px;
       min-width:0;
-    }
-    .${BLOCK_CLASS}-dual-item{min-width:0;padding-right:9px}
-    .${BLOCK_CLASS}-dual-item+ .${BLOCK_CLASS}-dual-item{
-      padding-right:0;
-      padding-left:9px;
-      border-left:1px solid color-mix(in srgb,var(--border) 78%,transparent);
-    }
-    .${BLOCK_CLASS}-small-label{
-      display:flex;
-      align-items:center;
-      gap:4px;
-      color:var(--muted-foreground);
-      font-size:8px;
-      line-height:1;
-      white-space:nowrap;
-    }
-    .${BLOCK_CLASS}-down{color:#43a7ff;font-size:10px}
-    .${BLOCK_CLASS}-up{color:#38e88c;font-size:10px}
-    .${BLOCK_CLASS}-data{
-      margin-top:4px;
-      color:var(--foreground);
-      font-size:10.5px;
-      line-height:1;
-      font-weight:700;
-      font-variant-numeric:tabular-nums;
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-    }
-    .${BLOCK_CLASS}-mini-spark{height:14px;margin-top:5px;opacity:.9}
-    .${BLOCK_CLASS}-footer{
-      display:grid;
-      grid-template-columns:1fr 1fr;
-      gap:0;
-      margin-top:8px;
+      height:55px;
+      margin-top:7px;
       padding:8px 10px;
-      border:1px solid color-mix(in srgb,var(--border) 82%,transparent);
+      border:1px solid color-mix(in srgb,var(--border) 84%,transparent);
       border-radius:11px;
-      background:color-mix(in srgb,var(--card) 96%,transparent);
+      background:linear-gradient(145deg,color-mix(in srgb,var(--card) 97%,#17212c 3%),color-mix(in srgb,var(--card) 99%,#090d12 1%));
+      box-shadow:inset 0 1px rgba(255,255,255,.015);
     }
-    .${BLOCK_CLASS}-footer-item{min-width:0}
-    .${BLOCK_CLASS}-footer-item+ .${BLOCK_CLASS}-footer-item{
-      padding-left:10px;
-      border-left:1px solid color-mix(in srgb,var(--border) 78%,transparent);
-    }
-    .${BLOCK_CLASS}-footer-label{
+    .${BLOCK_CLASS}-network-title{
       display:flex;
       align-items:center;
-      gap:4px;
+      gap:5px;
       color:var(--muted-foreground);
-      font-size:8px;
+      font-size:9.5px;
       line-height:1;
+      font-weight:650;
+      white-space:nowrap;
     }
-    .${BLOCK_CLASS}-footer-value{
-      margin-top:4px;
+    .${BLOCK_CLASS}-network-title svg{width:11px;height:11px}
+    .${BLOCK_CLASS}-net-item{
+      display:grid;
+      grid-template-columns:auto minmax(0,1fr);
+      grid-template-rows:auto 13px;
+      column-gap:6px;
+      row-gap:4px;
+      min-width:0;
+      padding-left:10px;
+      border-left:1px solid color-mix(in srgb,var(--border) 76%,transparent);
+    }
+    .${BLOCK_CLASS}-net-label{
+      display:flex;
+      align-items:center;
+      gap:3px;
+      color:var(--muted-foreground);
+      font-size:7.5px;
+      line-height:1;
+      white-space:nowrap;
+    }
+    .${BLOCK_CLASS}-down{color:#43a7ff;font-size:9px}
+    .${BLOCK_CLASS}-up{color:#38e88c;font-size:9px}
+    .${BLOCK_CLASS}-net-value{
+      min-width:0;
       color:var(--foreground);
-      font-size:10.5px;
+      font-size:9.5px;
       line-height:1;
       font-weight:700;
       font-variant-numeric:tabular-nums;
       white-space:nowrap;
       overflow:hidden;
       text-overflow:ellipsis;
+      text-align:right;
+    }
+    .${BLOCK_CLASS}-mini-spark{
+      grid-column:1/-1;
+      height:13px;
+      min-width:0;
+      opacity:.88;
     }
     .${BLOCK_CLASS}-error{color:var(--muted-foreground);font-size:9px;padding:.1rem 0}
 
@@ -217,9 +231,14 @@
     .${IP_BUTTON_CLASS}:focus-visible{outline:2px solid color-mix(in srgb,var(--primary) 65%,transparent);outline-offset:1px}
     .${IP_BUTTON_CLASS} svg{width:13px;height:13px}
 
-    @media(max-width:440px){
-      .${BLOCK_CLASS}-grid{grid-template-columns:1fr}
-      .${BLOCK_CLASS}-metric,.${BLOCK_CLASS}-metric.wide{height:78px}
+    @media(max-width:390px){
+      .${BLOCK_CLASS}-resources{gap:6px}
+      .${BLOCK_CLASS}-metric{height:64px;padding:8px}
+      .${BLOCK_CLASS}-usage{font-size:8px}
+      .${BLOCK_CLASS}-chart-row{grid-template-columns:minmax(0,1fr) 31px;gap:5px}
+      .${BLOCK_CLASS}-network{grid-template-columns:auto 1fr 1fr;gap:6px;padding:7px 8px}
+      .${BLOCK_CLASS}-net-item{padding-left:7px}
+      .${BLOCK_CLASS}-network-title span{display:none}
     }
   `;
 
@@ -271,14 +290,11 @@
     return `${formatBytes(value)}/s`;
   }
 
-  function formatUptime(seconds) {
-    let s = Math.max(0, Math.floor(Number(seconds) || 0));
-    const days = Math.floor(s / 86400); s %= 86400;
-    const hours = Math.floor(s / 3600); s %= 3600;
-    const minutes = Math.floor(s / 60);
-    if (days) return `${days}d ${hours}h`;
-    if (hours) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
+  function formatCoreValue(value) {
+    const n = Math.max(0, Number(value) || 0);
+    if (n >= 10) return n.toFixed(1);
+    if (n >= 1) return n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+    return n.toFixed(2);
   }
 
   function pushHistory(nodeId, key, value) {
@@ -287,7 +303,7 @@
     const bucket = history.get(id);
     if (!Array.isArray(bucket[key])) bucket[key] = [];
     bucket[key].push(Number(value) || 0);
-    if (bucket[key].length > 20) bucket[key].shift();
+    if (bucket[key].length > 24) bucket[key].shift();
   }
 
   function getHistory(nodeId, key) {
@@ -304,34 +320,58 @@
       pushHistory(node.id, 'ram', ramPct);
       pushHistory(node.id, 'rx', Number(stats.incoming_bandwidth_speed) || 0);
       pushHistory(node.id, 'tx', Number(stats.outgoing_bandwidth_speed) || 0);
-      pushHistory(node.id, 'down', Number(node.downlink) || 0);
-      pushHistory(node.id, 'up', Number(node.uplink) || 0);
     }
   }
 
-  function sparkPath(values, width = 180, height = 28, pad = 2) {
-    const points = Array.isArray(values) && values.length ? values : [0, 0];
-    const min = Math.min(...points);
-    const max = Math.max(...points);
+  function smoothSeries(values, alpha = .42) {
+    const source = Array.isArray(values) && values.length ? values.map(v => Number(v) || 0) : [0, 0];
+    if (source.length < 2) return source;
+    const out = [source[0]];
+    for (let i = 1; i < source.length; i += 1) {
+      out.push(out[i - 1] + alpha * (source[i] - out[i - 1]));
+    }
+    return out;
+  }
+
+  function pointSeries(values, width, height, pad, fixedMin = null, fixedMax = null) {
+    const source = smoothSeries(values);
+    const min = Number.isFinite(fixedMin) ? fixedMin : Math.min(...source);
+    const max = Number.isFinite(fixedMax) ? fixedMax : Math.max(...source);
     const range = Math.max(1, max - min);
-    const step = points.length > 1 ? (width - pad * 2) / (points.length - 1) : 0;
-    return points.map((value, index) => {
-      const x = pad + index * step;
-      const y = height - pad - ((value - min) / range) * (height - pad * 2);
-      return `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
-    }).join(' ');
+    const step = source.length > 1 ? (width - pad * 2) / (source.length - 1) : 0;
+    return source.map((value, index) => ({
+      x: pad + index * step,
+      y: height - pad - ((clamp(value, min, max) - min) / range) * (height - pad * 2),
+    }));
   }
 
-  function spark(values, width = 180, height = 28) {
-    return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><path d="${sparkPath(values, width, height, 2)}"/></svg>`;
+  function smoothPath(points) {
+    if (!points.length) return '';
+    if (points.length === 1) return `M${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+    let d = `M${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const p0 = points[Math.max(0, i - 1)];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[Math.min(points.length - 1, i + 2)];
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      d += ` C${cp1x.toFixed(1)} ${cp1y.toFixed(1)} ${cp2x.toFixed(1)} ${cp2y.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    }
+    return d;
   }
 
-  const icon = (path, size = 12) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+  function spark(values, width = 180, height = 27, fixedPercentScale = false) {
+    const points = pointSeries(values, width, height, 2, fixedPercentScale ? 0 : null, fixedPercentScale ? 100 : null);
+    return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><path d="${smoothPath(points)}"/></svg>`;
+  }
+
+  const icon = (path, size = 11) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
   const cpuIcon = icon('<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>');
   const ramIcon = icon('<path d="M2 12h20M6 12v4M10 12v4M14 12v4M18 12v4M4 8h16a2 2 0 0 1 2 2v6H2v-6a2 2 0 0 1 2-2Z"/>');
   const networkIcon = icon('<circle cx="12" cy="12" r="3"/><path d="M2 12h7M15 12h7M12 2v7M12 15v7"/>');
-  const trafficIcon = icon('<path d="M7 7h11l-3-3M17 17H6l3 3"/>');
-  const clockIcon = icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
   const eyeIcon = icon('<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>', 13);
   const eyeOffIcon = icon('<path d="m3 3 18 18"/><path d="M10.6 6.2A9.8 9.8 0 0 1 12 6c6.5 0 10 6 10 6a16.4 16.4 0 0 1-3 3.8M6.5 6.5C3.7 8.1 2 12 2 12s3.5 6 10 6a9.9 9.9 0 0 0 4.1-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/>', 13);
 
@@ -444,74 +484,57 @@
     }
 
     const cpu = clamp(stats.cpu_usage);
-    const ramPct = stats.mem_total ? clamp((Number(stats.mem_used) / Number(stats.mem_total)) * 100) : 0;
+    const cpuCores = Math.max(0, Number(stats.cpu_cores) || 0);
+    const cpuUsed = cpuCores ? cpuCores * cpu / 100 : 0;
+    const ramUsed = Number(stats.mem_used) || 0;
+    const ramTotal = Number(stats.mem_total) || 0;
+    const ramPct = ramTotal ? clamp((ramUsed / ramTotal) * 100) : 0;
     const rx = Number(stats.incoming_bandwidth_speed) || 0;
     const tx = Number(stats.outgoing_bandwidth_speed) || 0;
-    const sessionDown = Number(node.downlink) || 0;
-    const sessionUp = Number(node.uplink) || 0;
-    const lifetimeDown = Number(node.lifetime_downlink) || 0;
-    const lifetimeUp = Number(node.lifetime_uplink) || 0;
-    const lifetimeTotal = lifetimeDown + lifetimeUp;
+
+    const cpuPercent = `${cpu.toFixed(cpu < 10 ? 1 : 0)}%`;
+    const ramPercent = `${ramPct.toFixed(ramPct < 10 ? 1 : 0)}%`;
+    const cpuUsageText = cpuCores ? `${formatCoreValue(cpuUsed)} / ${formatCoreValue(cpuCores)} cores` : '—';
+    const ramUsageText = ramTotal ? `${formatBytes(ramUsed)} / ${formatBytes(ramTotal)}` : '—';
 
     const html = `
-      <div class="${BLOCK_CLASS}-grid">
+      <div class="${BLOCK_CLASS}-resources">
         <div class="${BLOCK_CLASS}-metric">
           <div class="${BLOCK_CLASS}-head">
             <div class="${BLOCK_CLASS}-title">${cpuIcon}<span>CPU</span></div>
-            <div class="${BLOCK_CLASS}-value">${cpu.toFixed(cpu < 10 ? 1 : 0)}%<span class="${BLOCK_CLASS}-sub">${Number(stats.cpu_cores) || 0}c</span></div>
+            <div class="${BLOCK_CLASS}-usage" title="${cpuUsageText}">${cpuUsageText}</div>
           </div>
-          <div class="${BLOCK_CLASS}-spark green">${spark(getHistory(node.id, 'cpu'))}</div>
+          <div class="${BLOCK_CLASS}-chart-row">
+            <div class="${BLOCK_CLASS}-spark green">${spark(getHistory(node.id, 'cpu'), 180, 27, true)}</div>
+            <div class="${BLOCK_CLASS}-percent">${cpuPercent}</div>
+          </div>
         </div>
 
         <div class="${BLOCK_CLASS}-metric">
           <div class="${BLOCK_CLASS}-head">
             <div class="${BLOCK_CLASS}-title">${ramIcon}<span>RAM</span></div>
-            <div class="${BLOCK_CLASS}-value">${formatBytes(stats.mem_used)}<span class="${BLOCK_CLASS}-sub">/ ${formatBytes(stats.mem_total)} · ${ramPct.toFixed(0)}%</span></div>
+            <div class="${BLOCK_CLASS}-usage" title="${ramUsageText}">${ramUsageText}</div>
           </div>
-          <div class="${BLOCK_CLASS}-spark purple">${spark(getHistory(node.id, 'ram'))}</div>
-        </div>
-
-        <div class="${BLOCK_CLASS}-metric wide">
-          <div class="${BLOCK_CLASS}-title">${networkIcon}<span>Network</span></div>
-          <div class="${BLOCK_CLASS}-dual">
-            <div class="${BLOCK_CLASS}-dual-item">
-              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-down">↓</span><span>RX</span></div>
-              <div class="${BLOCK_CLASS}-data">${formatRate(rx)}</div>
-              <div class="${BLOCK_CLASS}-mini-spark blue">${spark(getHistory(node.id, 'rx'), 110, 14)}</div>
-            </div>
-            <div class="${BLOCK_CLASS}-dual-item">
-              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-up">↑</span><span>TX</span></div>
-              <div class="${BLOCK_CLASS}-data">${formatRate(tx)}</div>
-              <div class="${BLOCK_CLASS}-mini-spark green">${spark(getHistory(node.id, 'tx'), 110, 14)}</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="${BLOCK_CLASS}-metric wide">
-          <div class="${BLOCK_CLASS}-title">${trafficIcon}<span>Traffic</span></div>
-          <div class="${BLOCK_CLASS}-dual">
-            <div class="${BLOCK_CLASS}-dual-item">
-              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-down">↓</span><span>Down</span></div>
-              <div class="${BLOCK_CLASS}-data">${formatBytes(sessionDown)}</div>
-              <div class="${BLOCK_CLASS}-mini-spark blue">${spark(getHistory(node.id, 'down'), 110, 14)}</div>
-            </div>
-            <div class="${BLOCK_CLASS}-dual-item">
-              <div class="${BLOCK_CLASS}-small-label"><span class="${BLOCK_CLASS}-up">↑</span><span>Up</span></div>
-              <div class="${BLOCK_CLASS}-data">${formatBytes(sessionUp)}</div>
-              <div class="${BLOCK_CLASS}-mini-spark green">${spark(getHistory(node.id, 'up'), 110, 14)}</div>
-            </div>
+          <div class="${BLOCK_CLASS}-chart-row">
+            <div class="${BLOCK_CLASS}-spark purple">${spark(getHistory(node.id, 'ram'), 180, 27, true)}</div>
+            <div class="${BLOCK_CLASS}-percent">${ramPercent}</div>
           </div>
         </div>
       </div>
 
-      <div class="${BLOCK_CLASS}-footer">
-        <div class="${BLOCK_CLASS}-footer-item">
-          <div class="${BLOCK_CLASS}-footer-label">${clockIcon}<span>Uptime</span></div>
-          <div class="${BLOCK_CLASS}-footer-value">${formatUptime(stats.uptime)}</div>
+      <div class="${BLOCK_CLASS}-network">
+        <div class="${BLOCK_CLASS}-network-title">${networkIcon}<span>Network</span></div>
+
+        <div class="${BLOCK_CLASS}-net-item">
+          <div class="${BLOCK_CLASS}-net-label"><span class="${BLOCK_CLASS}-down">↓</span><span>RX</span></div>
+          <div class="${BLOCK_CLASS}-net-value">${formatRate(rx)}</div>
+          <div class="${BLOCK_CLASS}-mini-spark blue">${spark(getHistory(node.id, 'rx'), 120, 13)}</div>
         </div>
-        <div class="${BLOCK_CLASS}-footer-item">
-          <div class="${BLOCK_CLASS}-footer-label"><span>Life</span></div>
-          <div class="${BLOCK_CLASS}-footer-value">${lifetimeTotal ? formatBytes(lifetimeTotal) : '—'}</div>
+
+        <div class="${BLOCK_CLASS}-net-item">
+          <div class="${BLOCK_CLASS}-net-label"><span class="${BLOCK_CLASS}-up">↑</span><span>TX</span></div>
+          <div class="${BLOCK_CLASS}-net-value">${formatRate(tx)}</div>
+          <div class="${BLOCK_CLASS}-mini-spark green">${spark(getHistory(node.id, 'tx'), 120, 13)}</div>
         </div>
       </div>`;
 
