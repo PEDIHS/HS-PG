@@ -12,6 +12,8 @@
   let pollTimer = null;
   let latest = null;
   let statusError = null;
+  let section = 'overview';
+  let refreshing = false;
 
   const shieldIcon = (className='') => `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 19 6v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6l7-3Z"/><path d="m9.5 12 1.7 1.7 3.5-4"/></svg>`;
   const slidersIcon = (className='') => `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>`;
@@ -78,6 +80,8 @@
     #${ROOT_ID} .hs-good{color:#22c55e}
     #${ROOT_ID} .hs-warn{color:#f59e0b}
     #${ROOT_ID} .hs-bad{color:#ef4444}
+    #${ROOT_ID} input,#${ROOT_ID} select{font:inherit;padding:8px;border:1px solid hsl(var(--border));border-radius:8px;background:hsl(var(--background));color:hsl(var(--foreground))}
+    #${ROOT_ID} button:focus-visible{outline:2px solid #d9b34c;outline-offset:2px}
     #${ROOT_ID} .hs-refresh{border:1px solid hsl(var(--border));background:hsl(var(--background));color:hsl(var(--foreground));border-radius:9px;padding:.35rem .6rem;font-size:.67rem;cursor:pointer}
     #${ROOT_ID} .hs-empty{padding:1rem;color:hsl(var(--muted-foreground));font-size:.7rem}
     @media(max-width:1100px){#${ROOT_ID} .hs-grid{grid-template-columns:repeat(2,1fr)}#${ROOT_ID} .hs-layers{grid-template-columns:repeat(3,1fr)}#${ROOT_ID} .hs-main{grid-template-columns:1fr}}
@@ -129,8 +133,8 @@
         updated_at:null,
         metrics:{pps:0,mbps:0,syn_recv:0,established:0},
         baseline:{pps:0},
-        layers:{hs_detector:{active:true,role:'observe-only detector'}},
-        layers_ready:1,
+        layers:{},
+        layers_ready:0,
         layers_total:5,
         origin:{state:'unknown',public_bindings:[]},
         stage_reasons:[message],
@@ -230,6 +234,11 @@
       outlet.appendChild(root);
     }
 
+    if(section!=='overview'){
+      renderSection(root);
+      return true;
+    }
+    delete root.dataset.editSection;
     const reason=(Array.isArray(status.stage_reasons)&&status.stage_reasons[0])||statusError||'Waiting for telemetry';
     const originClass=origin.state==='hidden'?'hs-good':origin.state==='public'?'hs-bad':'hs-warn';
     const stages=['standby','normal','elevated','attack','lockdown'];
@@ -241,15 +250,16 @@
         <button type="button" class="hs-active" data-hs-shield-tab="firewall">${shieldIcon()}<span>Firewall</span></button>
       </div>
 
+      ${sectionTabs()}
       <section class="hs-hero">
         <div class="hs-hero-grid">
           <div>
             <div class="hs-kicker">HS Shield • v${VERSION}</div>
             <h2>Panel Firewall Control Plane</h2>
-            <div class="hs-muted">Multi-stage protection telemetry with a fail-open rollout. Observe mode never changes panel traffic.</div>
+            <div class="hs-muted">Live traffic, explicit access rules and adaptive SYN protection.</div>
             <div class="hs-chip-row">
               <span class="hs-chip">Stage <strong>${esc(stageLabel(stage))}</strong></span>
-              <span class="hs-chip">Mode <strong>Observe</strong></span>
+              <span class="hs-chip">Mode <strong>${esc(status.mode||'observe')}</strong></span>
               <span class="hs-chip">Origin <strong>${esc(origin.state||'unknown')}</strong></span>
               <span class="hs-chip">Layers <strong>${Number(status.layers_ready)||0}/${Number(status.layers_total)||0}</strong></span>
               ${pending?'<span class="hs-chip">Backend <strong>Pending activation</strong></span>':''}
@@ -262,8 +272,8 @@
       <div class="hs-stagebar">${stages.map((item,index)=>`<div class="hs-stage ${item===stage?'active':''} ${stage==='attack'&&item===stage?'attack':''}"><span>0${index}</span><b>${stageLabel(item)}</b></div>`).join('')}</div>
 
       <div class="hs-grid">
-        <div class="hs-card"><div class="hs-label">Incoming packet rate</div><div class="hs-value">${fmtRate(metrics.pps)} <small style="font-size:.62em;font-weight:600">pps</small></div><div class="hs-sub">Adaptive baseline ${fmtRate(status.baseline?.pps||0)} pps</div></div>
-        <div class="hs-card"><div class="hs-label">Network throughput</div><div class="hs-value">${Number(metrics.mbps||0).toFixed(1)} <small style="font-size:.62em;font-weight:600">Mbps</small></div><div class="hs-sub">Host-wide observation, no packet interception</div></div>
+        <div class="hs-card"><div class="hs-label">Host packet rate (RX + TX)</div><div class="hs-value">${fmtRate(metrics.pps)} <small style="font-size:.62em;font-weight:600">pps</small></div><div class="hs-sub">Adaptive baseline ${fmtRate(status.baseline?.pps||0)} pps</div></div>
+        <div class="hs-card"><div class="hs-label">Network throughput</div><div class="hs-value">${Number(metrics.mbps||0).toFixed(1)} <small style="font-size:.62em;font-weight:600">Mbps</small></div><div class="hs-sub">Host interfaces; virtual interfaces may count forwarded traffic twice</div></div>
         <div class="hs-card"><div class="hs-label">TCP SYN-RECV</div><div class="hs-value">${Math.round(Number(metrics.syn_recv)||0)}</div><div class="hs-sub">Connection-flood pressure signal</div></div>
         <div class="hs-card"><div class="hs-label">Established TCP</div><div class="hs-value">${Math.round(Number(metrics.established)||0)}</div><div class="hs-sub">Current host connection pressure</div></div>
       </div>
@@ -281,11 +291,11 @@
         <section class="hs-section">
           <div class="hs-section-head"><h3>Safety & exposure</h3><span class="hs-pill">fail-open</span></div>
           <div class="hs-side">
-            <div class="hs-safe"><strong>Traffic is untouched</strong>${pending?'Firewall UI is installed, but the read-only telemetry backend has not entered the running PasarGuard process yet.':'Observe mode cannot add firewall rules, restart PasarGuard, or change Docker networking.'}</div>
+            <div class="hs-safe"><strong>${status.enforcement?.active?'Firewall rules are active':'Observe mode'}</strong>${pending?'Firewall UI is installed, but the read-only telemetry backend has not entered the running PasarGuard process yet.':esc(status.enforcement?.error||'HS manages its own host INPUT rules. Forwarded Docker traffic is outside this policy.')}</div>
             <div class="hs-row"><span>Current reason</span><b>${esc(reason)}</b></div>
             <div class="hs-row"><span>Origin exposure</span><b class="${originClass}">${esc(origin.state||'unknown')}</b></div>
             <div class="hs-row"><span>Public bindings</span><b>${Array.isArray(origin.public_bindings)?origin.public_bindings.length:0}</b></div>
-            <div class="hs-row"><span>Traffic modified</span><b class="hs-good">No</b></div>
+            <div class="hs-row"><span>Traffic modified</span><b>${status.enforcement?.traffic_modified?'Yes':'No'}</b></div>
             <div class="hs-row"><span>Fail-open</span><b class="hs-good">Enabled</b></div>
             <div class="hs-row"><span>Last telemetry</span><b>${esc(fmtTime(status.updated_at))}</b></div>
           </div>
@@ -293,6 +303,9 @@
       </div>
     </div>`;
 
+    root.querySelector('.hs-wrap')?.insertAdjacentHTML('afterbegin', enforcementNotice(status));
+    bindSections(root);
+    window.HSServices?.mountTabs?.(root, 'firewall');
     root.querySelector('[data-hs-shield-tab="features"]')?.addEventListener('click',event=>{
       event.preventDefault();
       event.stopPropagation();
@@ -319,14 +332,14 @@
       if(allowed)latest=placeholderData(statusError);
     }
 
-    if(active||force){
+    if(active){
       if(!render(latest))console.warn('[HS Shield] render skipped because dashboard outlet was not available');
     }
   }
 
   function startPolling(){
     stopPolling();
-    pollTimer=setInterval(()=>refresh(false),2000);
+    pollTimer=setInterval(()=>{if(!document.hidden&&!refreshing){refreshing=true;refresh(false).finally(()=>refreshing=false);}},3000);
   }
 
   function stopPolling(){
@@ -364,6 +377,7 @@
     if(!latest)await refresh(false);
     if(!latest)latest=placeholderData(statusError||undefined);
 
+    window.HSServices?.close?.();
     window.HSPluginDebug?.close?.();
     const outlet=getOutletHost();
     if(!outlet){
@@ -397,13 +411,63 @@
     },true);
   }
 
+
+  function sectionTabs(){
+    return `<nav aria-label="Firewall sections" style="display:flex;gap:8px;flex-wrap:wrap">${['overview','rules','events','settings'].map(name=>`<button class="hs-refresh" type="button" data-shield-section="${name}" aria-current="${section===name?'page':'false'}" style="${section===name?'border-color:#d9b34c;color:#b58a25':''}">${name[0].toUpperCase()+name.slice(1)}</button>`).join('')}</nav>`;
+  }
+  function enforcementNotice(status){
+    const pending=status.enforcement?.pending;
+    if(status.stale)return '<div class="hs-safe hs-bad" role="alert">Agent heartbeat is stale. Live protection status is unavailable.</div>';
+    if(!pending)return status.enforcement?.error?`<div class="hs-safe hs-bad" role="alert">${esc(status.enforcement.error)}</div>`:'';
+    return `<div class="hs-safe" role="alert">New policy is awaiting confirmation. Automatic rollback at ${esc(new Date(pending.deadline*1000).toLocaleTimeString())}. <button class="hs-refresh" data-shield-confirm="${esc(pending.token)}">Keep this policy</button></div>`;
+  }
+  async function writeShield(path,body){
+    const res=await rawFetch('/api/hs-shield/'+path,{method:path==='confirm'?'POST':'PUT',headers:authHeaders(),body:JSON.stringify(body)});
+    const data=await res.json();if(!res.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));
+    await refresh(false);return data;
+  }
+  function bindSections(root){
+    root.querySelectorAll('[data-shield-section]').forEach(button=>button.onclick=()=>{section=button.dataset.shieldSection;render(latest);});
+    root.querySelector('[data-shield-confirm]')?.addEventListener('click',async event=>{
+      const b=event.currentTarget;b.disabled=true;
+      try{await writeShield('confirm',{token:b.dataset.shieldConfirm});}catch(e){b.textContent=e.message;b.disabled=false;}
+    });
+  }
+  function renderSection(root){
+    // Polling must not replace forms while the administrator is editing.
+    if(root.dataset.editSection===section){
+      const notice=root.querySelector('[data-notice]');if(notice){notice.innerHTML=enforcementNotice(latest?.status||{});bindSections(root);}
+      return;
+    }
+    root.dataset.editSection=section;
+    const config=latest?.config||{};const policy=config.policy||{management_ports:[22],rules:[],syn_ports:[],syn_rate:100};
+    root.innerHTML=`<div class="hs-wrap"><div id="${TOP_TABS_ID}"><button data-features>Features</button><button class="hs-active">Firewall</button></div>${sectionTabs()}<div data-notice>${enforcementNotice(latest?.status||{})}</div><section class="hs-section"><div class="hs-section-head"><h3>${esc(section[0].toUpperCase()+section.slice(1))}</h3><span class="hs-pill">HS Shield</span></div><div class="hs-side" data-content></div></section><p data-result role="status"></p></div>`;
+    const content=root.querySelector('[data-content]');
+    const message=root.querySelector('[data-result]');
+    const save=async(body)=>{try{await writeShield('config',body);message.textContent='Saved. The agent will apply the requested state.';}catch(e){message.textContent=e.message;}};
+    if(section==='rules'){
+      content.innerHTML=`<p class="hs-sub">Explicit allow rules take priority. Established connections and protected management ports remain reachable. Applies to host INPUT.</p><div data-rules></div><form data-add style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px"><select name="action" aria-label="Action"><option value="block">Block</option><option value="allow">Allow</option></select><input name="source" placeholder="IP or CIDR" aria-label="Source network" required><select name="protocol" aria-label="Protocol"><option value="any">Any protocol</option><option>tcp</option><option>udp</option></select><input name="port" type="number" min="1" max="65535" placeholder="Optional port" aria-label="Destination port"><button class="hs-refresh">Add rule</button></form><button class="hs-refresh" data-save style="margin-top:16px">Save rules</button>`;
+      const rows=JSON.parse(JSON.stringify(policy.rules));
+      const draw=()=>{const list=content.querySelector('[data-rules]');list.innerHTML=rows.map((r,i)=>`<div class="hs-row"><span>${esc(r.action)} · ${esc(r.source)} · ${esc(r.protocol)} ${esc(r.port||'')}</span><button class="hs-refresh" data-remove="${i}">Remove</button></div>`).join('')||'<p>No custom rules.</p>';list.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{rows.splice(Number(b.dataset.remove),1);draw();});};draw();
+      content.querySelector('form').onsubmit=e=>{e.preventDefault();const f=new FormData(e.currentTarget);rows.push({id:Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join(''),action:f.get('action'),source:f.get('source'),protocol:f.get('protocol'),port:f.get('port')?Number(f.get('port')):null,enabled:true});draw();e.currentTarget.reset();};
+      content.querySelector('[data-save]').onclick=()=>save({policy:{...policy,rules:rows}});
+    }else if(section==='settings'){
+      content.innerHTML=`<form style="display:grid;gap:14px;max-width:560px"><label>Mode <select name="mode"><option value="observe">Observe</option><option value="enforce">Enforce</option></select></label><label><input type="checkbox" name="enabled" ${config.enabled?'checked':''}> Enable firewall feature</label><label><input type="checkbox" name="auto" ${config.auto_stage?'checked':''}> Activate SYN protection on elevated / attack stages</label><label>Protected management TCP ports <input required name="management" value="${esc(policy.management_ports.join(','))}"></label><label>SYN protection TCP ports <input name="syn" value="${esc(policy.syn_ports.join(','))}"></label><label>SYN rate per source / second <input name="rate" type="number" min="10" max="100000" value="${policy.syn_rate}"></label><p class="hs-sub">An enforcement change must be confirmed within 45 seconds. Start in Observe to inspect traffic.</p><button class="hs-refresh">Apply settings</button></form>`;
+      const form=content.querySelector('form');form.elements.mode.value=config.mode||'observe';
+      form.onsubmit=e=>{e.preventDefault();const f=new FormData(form);const ports=name=>String(f.get(name)||'').split(',').map(v=>v.trim()).filter(Boolean).map(Number);save({enabled:f.has('enabled'),auto_stage:f.has('auto'),mode:f.get('mode'),policy:{...policy,management_ports:ports('management'),syn_ports:ports('syn'),syn_rate:Number(f.get('rate'))}});};
+    }else{
+      content.innerHTML=(latest?.events||[]).map(e=>`<div class="hs-row"><span>${esc(e.at)}</span><span>${esc(e.message)}</span></div>`).join('')||'<p>No events recorded.</p>';
+    }
+    bindSections(root);window.HSServices?.mountTabs?.(root,'firewall');
+    root.querySelector('[data-features]')?.addEventListener('click',()=>window.HSPluginDebug?.open?.());
+  }
   async function boot(){
     injectStyle();
     watchNavigation();
     window.addEventListener('hs-shield:activate',()=>show());
     await probeOwner();
     await refresh(false);
-    setInterval(()=>refresh(false),10000);
+    document.addEventListener('visibilitychange',()=>{if(active&&!document.hidden)refresh(false);});
     console.info(`[HS Shield] ${VERSION} loaded`);
   }
 

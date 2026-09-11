@@ -14,7 +14,7 @@ REGISTER_END = "# hs-shield-router-register-end"
 
 
 def strip_block(text: str, start: str, end: str) -> str:
-    return re.sub(rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?", "\n", text, flags=re.S)
+    return re.sub(rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?", "", text, flags=re.S)
 
 
 def routers_assignment_end(text: str) -> int:
@@ -33,15 +33,6 @@ def routers_assignment_end(text: str) -> int:
 
 
 def patch_router(text: str) -> str:
-    if (
-        IMPORT_START in text
-        and IMPORT_END in text
-        and REGISTER_START in text
-        and REGISTER_END in text
-        and "routers.insert(0, hs_shield_api.router)" in text
-    ):
-        return text
-
     text = strip_block(text, IMPORT_START, IMPORT_END)
     text = strip_block(text, REGISTER_START, REGISTER_END)
     if "api_router = APIRouter()" not in text:
@@ -50,8 +41,12 @@ def patch_router(text: str) -> str:
     import_block = (
         f"{IMPORT_START}\n"
         "try:\n"
-        "    from . import hs_shield_api\n"
+        "    from app import hs_shield_api\n"
+        "    from app import hs_services_api\n"
         "except Exception:\n"
+        "    import logging\n"
+        "    logging.getLogger(__name__).exception('HS Shield/Services router import failed')\n"
+        "    hs_services_api = None\n"
         "    hs_shield_api = None\n"
         f"{IMPORT_END}\n\n"
     )
@@ -62,6 +57,8 @@ def patch_router(text: str) -> str:
         f"{REGISTER_START}\n"
         "if hs_shield_api is not None:\n"
         "    routers.insert(0, hs_shield_api.router)\n"
+        "if hs_services_api is not None:\n"
+        "    routers.insert(0, hs_services_api.router)\n"
         f"{REGISTER_END}\n"
     )
     patched = text[:insert_at] + register_block + text[insert_at:]
@@ -83,14 +80,20 @@ def main() -> None:
     if not api_source.is_file():
         raise SystemExit(f"shield API source not found: {api_source}")
 
-    target_api = app / "hs_shield_api.py"
-    target_api.write_bytes(api_source.read_bytes())
-    original = router_file.read_text(encoding="utf-8")
-    patched = patch_router(original)
-    if patched != original:
-        router_file.write_text(patched, encoding="utf-8")
-    compile(target_api.read_text(encoding="utf-8"), str(target_api), "exec")
-    compile(router_file.read_text(encoding="utf-8"), str(router_file), "exec")
+    sources = {'hs_shield_api.py': api_source}
+    for name in ('hs_services_api.py', 'hs_firewall.py', 'hs_services.py', 'hs_outbounds.py', 'hs_fair_use.py'):
+        source = api_source.parent / name
+        if not source.is_file():
+            raise SystemExit(f'Missing HS dependency: {source}')
+        sources[name] = source
+    generated = {app/name: source.read_text(encoding='utf-8') for name,source in sources.items()}
+    original = router_file.read_text(encoding='utf-8')
+    generated[router_file] = patch_router(original)
+    for target, content in generated.items():
+        compile(content, str(target), 'exec')
+    for target, content in generated.items():
+        if not target.exists() or target.read_text(encoding='utf-8') != content:
+            target.write_text(content, encoding='utf-8')
 
 
 if __name__ == "__main__":

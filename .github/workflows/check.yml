@@ -2,6 +2,8 @@ name: check
 on:
   push:
   pull_request:
+permissions:
+  contents: read
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -13,19 +15,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Syntax and behavior checks
+      - run: pip install -r tests/requirements.txt
+      - name: Backend and API regression
         run: |
-          python -m py_compile backend/*.py plugin/patch_pasarguard.py plugin/patch_backup_api.py plugin/patch_shield_api.py tests/*.py
-          python tests/test_runtime.py
-          python tests/test_patcher.py
-          python tests/test_backup_agent.py
-          python tests/test_admin_time.py
-          python tests/test_shield_agent.py
-          node --check plugin/hs-plugin.js
-          node --check plugin/hs-tab-fix.js
-          node --check plugin/hs-node-pro.js
-          node --check plugin/hs-backup.js
-          node --check plugin/hs-backup-tab-watchdog.js
-          node --check plugin/hs-admin-time.js
-          node --check plugin/hs-shield.js
-          bash -n install.sh cli/hs-pg plugin/integrate-dashboard.sh plugin/integrate-shield.sh
+          python -m compileall -q backend plugin tests
+          python -m pytest -q
+          for file in plugin/*.js; do node --check "$file"; done
+          bash -n install.sh cli/hs-pg plugin/*.sh
+      - name: DOM and browser regression
+        run: |
+          npm ci --prefix tests
+          npm --prefix tests run test:dom
+          cd tests
+          npx playwright install --with-deps chromium
+          npm run test:browser
+      - name: nftables syntax in isolated network namespace
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y nftables
+          sudo python tests/nft_preflight.py

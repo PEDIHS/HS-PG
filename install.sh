@@ -35,6 +35,16 @@ else fail "curl or wget is required"; fi
 TMP="$(mktemp -d)"
 raw(){ printf 'https://raw.githubusercontent.com/%s/%s/%s?hs=%s' "$REPO" "$REF" "$1" "$(date +%s)"; }
 files=(
+  plugin/install-node-agent.sh
+  plugin/install-mtproxy.sh
+  backend/hs_firewall.py
+  backend/hs_services.py
+  backend/hs_services_api.py
+  backend/hs_services_agent.py
+  backend/hs_outbounds.py
+  backend/hs_fair_use.py
+  plugin/hs-services.js
+  systemd/hs-services-agent.service
   backend/hs_plugin_runtime.py
   backend/hs_plugin_api.py
   backend/hs_admin_time.py
@@ -80,9 +90,16 @@ python3 -m py_compile \
   "$TMP/plugin/patch_pasarguard.py" \
   "$TMP/plugin/patch_backup_api.py" \
   "$TMP/plugin/patch_shield_api.py" \
+  "$TMP/backend/hs_firewall.py" \
+  "$TMP/backend/hs_services.py" \
+  "$TMP/backend/hs_services_api.py" \
+  "$TMP/backend/hs_services_agent.py" \
+  "$TMP/backend/hs_outbounds.py" \
+  "$TMP/backend/hs_fair_use.py" \
   || fail "Python validation failed"
 
 if command -v node >/dev/null 2>&1; then
+  node --check "$TMP/plugin/hs-services.js" || fail "hs-services.js validation failed"
   node --check "$TMP/plugin/hs-plugin.js" || fail "hs-plugin.js validation failed"
   node --check "$TMP/plugin/hs-tab-fix.js" || fail "hs-tab-fix.js validation failed"
   node --check "$TMP/plugin/hs-node-pro.js" || fail "hs-node-pro.js validation failed"
@@ -99,6 +116,15 @@ backup="$ROOT/backups/$(date +%Y%m%d-%H%M%S)"
   cp -a "$ROOT/backend" "$ROOT/plugin" "$ROOT/cli" "$ROOT/systemd" "$backup/" 2>/dev/null || true
 }
 mkdir -p "$ROOT/backend" "$ROOT/plugin" "$ROOT/cli" "$ROOT/systemd" "$DATA"
+install -m 0755 "$TMP/plugin/install-node-agent.sh" "$ROOT/plugin/install-node-agent.sh"
+install -m 0755 "$TMP/plugin/install-mtproxy.sh" "$ROOT/plugin/install-mtproxy.sh"
+install -m 0644 "$TMP/backend/hs_firewall.py" "$ROOT/backend/hs_firewall.py"
+install -m 0644 "$TMP/backend/hs_services.py" "$ROOT/backend/hs_services.py"
+install -m 0644 "$TMP/backend/hs_services_api.py" "$ROOT/backend/hs_services_api.py"
+install -m 0644 "$TMP/backend/hs_services_agent.py" "$ROOT/backend/hs_services_agent.py"
+install -m 0644 "$TMP/backend/hs_outbounds.py" "$ROOT/backend/hs_outbounds.py"
+install -m 0644 "$TMP/backend/hs_fair_use.py" "$ROOT/backend/hs_fair_use.py"
+install -m 0644 "$TMP/plugin/hs-services.js" "$ROOT/plugin/hs-services.js"
 install -m 0644 "$TMP/backend/hs_plugin_runtime.py" "$ROOT/backend/hs_plugin_runtime.py"
 install -m 0644 "$TMP/backend/hs_plugin_api.py" "$ROOT/backend/hs_plugin_api.py"
 install -m 0644 "$TMP/backend/hs_admin_time.py" "$ROOT/backend/hs_admin_time.py"
@@ -141,11 +167,13 @@ JSON
   chmod 600 "$DATA/state.json"
 fi
 
+mkdir -p "$DATA/services" /var/lib/hs-pg-agent
+chmod 700 "$DATA/services" /var/lib/hs-pg-agent
 mkdir -p "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" "$DATA/shield"
 chmod 700 "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" "$DATA/shield" || true
 
 if command -v systemctl >/dev/null 2>&1; then
-  for unit in hs-pg-integrator.service hs-pg-integrator.timer hs-pg-integrator.path hs-pg-backup-agent.service hs-shield-agent.service hs-shield-integrator.service; do
+  for unit in hs-pg-integrator.service hs-pg-integrator.timer hs-pg-integrator.path hs-pg-backup-agent.service hs-shield-agent.service hs-shield-integrator.service hs-services-agent.service; do
     install -m 0644 "$TMP/systemd/$unit" "/etc/systemd/system/$unit"
   done
   systemctl daemon-reload
@@ -156,6 +184,8 @@ if command -v systemctl >/dev/null 2>&1; then
   systemctl restart hs-pg-integrator.service >/dev/null 2>&1 || true
   systemctl enable hs-pg-backup-agent.service >/dev/null 2>&1 || true
   systemctl restart hs-pg-backup-agent.service >/dev/null 2>&1 || true
+  systemctl enable --now hs-services-agent.service >/dev/null 2>&1 || true
+  systemctl restart hs-services-agent.service >/dev/null 2>&1 || true
   systemctl enable hs-shield-agent.service >/dev/null 2>&1 || true
   systemctl restart hs-shield-agent.service >/dev/null 2>&1 || true
   systemctl enable hs-shield-integrator.service >/dev/null 2>&1 || true
@@ -171,7 +201,7 @@ if [[ $RESTART -eq 1 ]]; then
 else
   log "no PasarGuard service restart performed"
   log "host persistence guard is active and will re-apply HS Plugin after PasarGuard update/restart/recreate"
-  log "HS Shield Phase 1 is observe-only and does not modify firewall rules, Docker networking or panel traffic"
+  log "HS Shield defaults to observe mode. Enforce requires nftables, preflight and a 45-second confirmation."
   log "Web Backup, Admin Time and newly patched backend routes may require one PasarGuard restart after first install/update"
   log "run 'sudo hs-pg restart' only when backend hooks need activation"
 fi

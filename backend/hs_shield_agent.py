@@ -15,6 +15,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from hs_firewall import FirewallController
 
 DATA_DIR = Path(os.getenv("HS_SHIELD_DATA_DIR", "/var/lib/pasarguard/hs-plugin/shield"))
 STATUS_FILE = DATA_DIR / "status.json"
@@ -64,10 +65,6 @@ def ensure_config() -> dict[str, Any]:
         if key not in current:
             current[key] = value
             changed = True
-    if current.get("mode") != "observe":
-        # Enforcement is intentionally unavailable until preflight/rollback is wired.
-        current["mode"] = "observe"
-        changed = True
     if changed or not CONFIG_FILE.exists():
         atomic_json(CONFIG_FILE, current)
     return current
@@ -246,6 +243,7 @@ def main() -> None:
     prev_time = time.monotonic()
     baseline = previous.get("baseline") if isinstance(previous.get("baseline"), dict) else {"pps": 1.0, "bps": 1.0}
     previous_stage = str(previous.get("stage") or "starting")
+    controller = FirewallController(DATA_DIR)
     append_event("agent", "HS Shield telemetry agent started in observe-only fail-open mode", "starting")
 
     while True:
@@ -266,9 +264,12 @@ def main() -> None:
             "established": float(count_ss("established")),
         }
 
+        if previous_stage == "starting":
+            baseline = {"pps": max(1.0, pps), "bps": max(1.0, bps)}
         # Learn only from non-attack traffic so a flood does not poison the baseline.
         alpha = 0.08
-        if previous_stage not in {"attack"}:
+        detected, _ = stage_for(config, metrics, baseline)
+        if detected not in {"attack", "elevated"}:
             baseline["pps"] = max(1.0, (1.0 - alpha) * float(baseline.get("pps", 1.0)) + alpha * pps)
             baseline["bps"] = max(1.0, (1.0 - alpha) * float(baseline.get("bps", 1.0)) + alpha * bps)
 
@@ -280,14 +281,8 @@ def main() -> None:
             "version": 1,
             "updated_at": now_iso(),
             "enabled": bool(config.get("enabled", True)),
-            "mode": "observe",
-            "enforcement": {
-                "active": False,
-                "policy": "observe-only",
-                "traffic_modified": False,
-                "fail_open": True,
-                "note": "Phase 1 never changes firewall, Docker or PasarGuard networking.",
-            },
+            "mode": config.get("mode", "observe"),
+            "enforcement": controller.tick(config, stage),
             "stage": stage,
             "stage_reasons": reasons,
             "metrics": metrics,

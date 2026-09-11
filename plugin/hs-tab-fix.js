@@ -196,7 +196,7 @@
   }
 
   function renderShell(outlet) {
-    hideNative(outlet);
+    // The primary plugin owns hiding/restoring the outlet.
     mountedOutlet = outlet;
 
     let root = document.getElementById(ROOT_ID);
@@ -218,6 +218,7 @@
                 <h3 class="text-base font-semibold sm:text-lg">HS Plugin</h3>
                 <p class="text-muted-foreground text-xs sm:text-sm">Manage HS extensions for PasarGuard.</p>
               </div>
+              <div id="hs-plugin-top-tabs"><button type="button" class="hs-active">Features</button><button type="button" data-hs-top-tab="firewall">Firewall</button></div>
               <div class="space-y-2">
                 ${featureCard('Host Usage Ratio', 'Enable or disable Usage Ratio controls inside Host.', 'hs-host-ratio-slot')}
                 ${featureCard('Node PRO', 'Enhance Node cards with compact realtime CPU and RAM charts.', 'hs-node-pro-slot')}
@@ -337,50 +338,20 @@
     attempt();
   }
 
-  function handleHsClick(event) {
-    const nav = event.target.closest?.(`#${NAV_ID}`);
-    if (!nav) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation?.();
-    if (!requested()) setRequested(true);
-    openWithRetry({ reloadFallback: true });
-  }
-
-  document.addEventListener('click', handleHsClick, true);
-
-  document.addEventListener('click', event => {
-    if (!document.getElementById(ROOT_ID)) return;
-    if (event.target.closest?.(`#${NAV_ID}`)) return;
-    const anchor = event.target.closest?.('a');
-    if (!anchor) return;
-    restoreNative();
-    if (requested()) setRequested(false, true);
-  }, false);
-
-  window.addEventListener('popstate', () => {
-    if (requested()) openWithRetry();
-    else restoreNative();
-  });
-
-  const boot = () => {
-    injectNodeProBrandStyle();
-    if (requested()) openWithRetry();
-  };
-
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
-  else boot();
-
+  // Navigation belongs to hs-plugin.js. Never capture sidebar clicks here.
   window.HSPluginTabFix = {
-    version: VERSION,
-    open: () => {
-      if (!requested()) setRequested(true);
-      openWithRetry({ reloadFallback: true });
-    },
-    close: () => {
-      restoreNative();
-      if (requested()) setRequested(false, true);
-    },
+    version: '0.4.0',
+    open: () => window.HSPluginDebug?.open?.(),
+    close: () => window.HSPluginDebug?.close?.(),
     findOutlet,
+    render(outlet) {
+      injectNodeProBrandStyle();
+      const root = renderShell(outlet);
+      root.querySelector('[data-hs-top-tab="firewall"]')?.addEventListener('click', () => window.HSShieldDebug?.open?.());
+      window.HSServices?.mountTabs?.(root, 'features');
+      hydrate(root).finally(refreshAdminTimeControl);
+      refreshAdminTimeControl();
+      return true;
+    },
   };
 })();

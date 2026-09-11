@@ -69,6 +69,8 @@ def _load_state() -> dict:
     features.setdefault("node_pro", {"enabled": False})
     features.setdefault("backup_web", {"enabled": False})
     features.setdefault("admin_time_limit", {"enabled": True})
+    for name in ("certificate_manager", "warp", "mtproxy", "fair_use"):
+        features.setdefault(name, {"enabled": False})
     value.setdefault("inbound_offsets", {})
     value.setdefault("admin_time_limits", {})
     return value
@@ -315,8 +317,10 @@ async def set_feature(
     body: ToggleBody,
     _owner: AdminDetails = Depends(_require_owner),
 ):
-    if feature_name not in {"host_usage_ratio", "node_pro", "backup_web", "admin_time_limit"}:
+    if feature_name not in {"host_usage_ratio", "node_pro", "backup_web", "admin_time_limit", "certificate_manager", "warp", "mtproxy", "fair_use"}:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown HS Plugin feature")
+    if feature_name == "fair_use" and body.enabled:
+        raise HTTPException(409, "Fair use requires a verified per-user node bandwidth adapter; saved policies are drafts")
     with _write_lock():
         state = _load_state()
         state.setdefault("features", {}).setdefault(feature_name, {})["enabled"] = body.enabled

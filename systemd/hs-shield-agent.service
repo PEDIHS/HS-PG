@@ -1,5 +1,5 @@
 [Unit]
-Description=HS Shield observe-first security telemetry agent
+Description=HS Shield firewall and security telemetry agent
 After=network-online.target docker.service
 Wants=network-online.target
 ConditionPathExists=/opt/hs-pg/backend/hs_shield_agent.py
@@ -11,6 +11,7 @@ Group=root
 UMask=0077
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 /opt/hs-pg/backend/hs_shield_agent.py
+ExecStopPost=-/usr/sbin/nft delete table inet hs_plugin
 Restart=on-failure
 RestartSec=2
 PrivateTmp=true
