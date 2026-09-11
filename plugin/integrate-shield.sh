@@ -7,12 +7,13 @@ PATCHER="${HS_ROOT}/plugin/patch_shield_api.py"
 API="${HS_ROOT}/backend/hs_shield_api.py"
 JS="${HS_ROOT}/plugin/hs-shield.js"
 MARKER="hs-shield-loader"
+SERVICES_JS="${HS_ROOT}/plugin/hs-services.js"
 
 log(){ printf '\033[1;33m[HS Shield]\033[0m %s\n' "$*"; }
 warn(){ printf '\033[1;31m[HS Shield]\033[0m %s\n' "$*" >&2; }
 sha12(){ sha256sum "$1" | awk '{print substr($1,1,12)}'; }
 
-for file in "$PATCHER" "$API" "$JS"; do
+for file in "$PATCHER" "$API" "$JS" "$SERVICES_JS"; do
   [[ -s "$file" ]] || { warn "missing $file"; exit 1; }
 done
 
@@ -20,7 +21,7 @@ inject_loader_host(){
   local html="$1" version tag
   [[ -f "$html" ]] || return 0
   version="$(sha12 "$JS")"
-  tag="<script id=\"${MARKER}\" src=\"/statics/hs-shield.js?v=${version}\" defer></script>"
+  tag="<script id=\"${MARKER}\" src=\"/statics/$(basename "$JS")?v=${version}\" defer></script>"
   python3 - "$html" "$MARKER" "$tag" <<'PY'
 from pathlib import Path
 import re, sys
@@ -38,7 +39,7 @@ inject_loader_container(){
   local cid="$1" html="$2" version tag
   docker exec "$cid" test -f "$html" >/dev/null 2>&1 || return 0
   version="$(sha12 "$JS")"
-  tag="<script id=\"${MARKER}\" src=\"/statics/hs-shield.js?v=${version}\" defer></script>"
+  tag="<script id=\"${MARKER}\" src=\"/statics/$(basename "$JS")?v=${version}\" defer></script>"
   docker exec -i "$cid" python3 - "$html" "$MARKER" "$tag" <<'PY'
 from pathlib import Path
 import re, sys
@@ -77,8 +78,14 @@ integrate_host(){
   if [[ -n "$build" ]]; then
     mkdir -p "$build/statics"
     install -m 0644 "$JS" "$build/statics/hs-shield.js"
+    install -m 0644 "$SERVICES_JS" "$build/statics/hs-services.js"
     inject_loader_host "$build/index.html"
     inject_loader_host "$build/404.html"
+    local saved_js="$JS" saved_marker="$MARKER"
+    JS="$SERVICES_JS"; MARKER="hs-services-loader"
+    inject_loader_host "$build/index.html"
+    inject_loader_host "$build/404.html"
+    JS="$saved_js"; MARKER="$saved_marker"
     log "dashboard loader healthy at $build"
   fi
 }
@@ -105,6 +112,9 @@ integrate_container(){
   if [[ -n "$app" ]]; then
     docker cp "$PATCHER" "$cid:/tmp/hs-shield-patch.py" >/dev/null
     docker cp "$API" "$cid:/tmp/hs_shield_api.py" >/dev/null
+    for support in hs_services_api.py hs_firewall.py hs_services.py hs_outbounds.py hs_fair_use.py; do
+      docker cp "$HS_ROOT/backend/$support" "$cid:/tmp/$support" >/dev/null
+    done
     docker exec "$cid" python3 /tmp/hs-shield-patch.py --app-root "$app" --shield-api /tmp/hs_shield_api.py >/dev/null
     log "API hook healthy in ${cid:0:12} ($app)"
   fi
@@ -113,8 +123,14 @@ integrate_container(){
   if [[ -n "$build" ]]; then
     docker exec "$cid" mkdir -p "$build/statics"
     docker cp "$JS" "$cid:$build/statics/hs-shield.js" >/dev/null
+    docker cp "$SERVICES_JS" "$cid:$build/statics/hs-services.js" >/dev/null
     inject_loader_container "$cid" "$build/index.html"
     inject_loader_container "$cid" "$build/404.html"
+    local saved_js="$JS" saved_marker="$MARKER"
+    JS="$SERVICES_JS"; MARKER="hs-services-loader"
+    inject_loader_container "$cid" "$build/index.html"
+    inject_loader_container "$cid" "$build/404.html"
+    JS="$saved_js"; MARKER="$saved_marker"
     log "dashboard loader healthy in ${cid:0:12} ($build)"
   fi
 }

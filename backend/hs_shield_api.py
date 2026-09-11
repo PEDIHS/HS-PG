@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import json
+import fcntl
+import tempfile
+from contextlib import contextmanager
+from collections import deque
+from datetime import UTC, datetime
 import os
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
+from typing import Literal
+from app.hs_firewall import validate_policy
 
 from app.models.admin import AdminDetails
 from app.routers.authentication import get_current
@@ -35,6 +42,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
 class ShieldConfigBody(BaseModel):
     enabled: bool | None = None
     auto_stage: bool | None = None
+    mode: Literal["observe", "enforce"] | None = None
+    policy: dict | None = None
 
 
 def _require_authenticated(current_admin: AdminDetails | None = Depends(get_current)) -> AdminDetails:
@@ -59,15 +68,30 @@ def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    with tempfile.NamedTemporaryFile(mode="w", dir=DATA_DIR, delete=False, encoding="utf-8") as file:
+        temp = Path(file.name)
+        os.chmod(temp, 0o600)
+        json.dump(value, file, ensure_ascii=False)
+        file.flush()
+        os.fsync(file.fileno())
+    os.replace(temp, path)
+
+
+@contextmanager
+def _lock():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with (DATA_DIR / '.config.lock').open('a') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _events(limit: int) -> list[dict[str, Any]]:
     try:
-        lines = EVENTS_FILE.read_text(encoding="utf-8").splitlines()
+        with EVENTS_FILE.open(encoding="utf-8") as handle:
+            lines = list(deque(handle, maxlen=limit * 2))
     except OSError:
         return []
     out: list[dict[str, Any]] = []
@@ -110,8 +134,14 @@ async def get_status(
         },
     )
     config = _read_json(CONFIG_FILE, DEFAULT_CONFIG)
-    # Phase 1 is intentionally observe-only regardless of stale/manual file edits.
-    config["mode"] = "observe"
+    updated = status_value.get("updated_at")
+    try:
+        stale = not updated or (datetime.now(UTC) - datetime.fromisoformat(updated)).total_seconds() > 15
+    except (ValueError, TypeError):
+        stale = True
+    status_value["stale"] = stale
+    if stale:
+        status_value["stage"] = "unavailable"
     return {"status": status_value, "config": config, "events": _events(30)}
 
 
@@ -128,15 +158,34 @@ async def update_config(
     body: ShieldConfigBody,
     _owner: AdminDetails = Depends(_require_owner),
 ):
-    config = _read_json(CONFIG_FILE, DEFAULT_CONFIG)
-    for key, value in DEFAULT_CONFIG.items():
-        config.setdefault(key, value)
-    if body.enabled is not None:
-        config["enabled"] = body.enabled
-    if body.auto_stage is not None:
-        config["auto_stage"] = body.auto_stage
-    # Never expose an enforcement switch until preflight + automatic rollback exist.
-    config["mode"] = "observe"
-    config["safe_fail_open"] = True
-    _write_json(CONFIG_FILE, config)
+    with _lock():
+        config = {**DEFAULT_CONFIG, **_read_json(CONFIG_FILE, DEFAULT_CONFIG)}
+        updates = body.model_dump(exclude_none=True)
+        if body.policy is not None:
+            try:
+                updates['policy'] = validate_policy(body.policy)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+        config.update(updates)
+        if body.mode == 'enforce' or body.policy is not None:
+            config.pop('confirmed_token', None)
+        config['safe_fail_open'] = True
+        _write_json(CONFIG_FILE, config)
     return {"ok": True, "config": config, "requires_restart": False}
+
+
+class ConfirmBody(BaseModel):
+    token: str
+
+
+@router.post('/confirm')
+async def confirm_policy(body: ConfirmBody, _owner: AdminDetails = Depends(_require_owner)):
+    import time
+    with _lock():
+        pending = _read_json(STATUS_FILE, {}).get('enforcement', {}).get('pending') or {}
+        if pending.get('token') != body.token or pending.get('deadline', 0) <= time.time():
+            raise HTTPException(409, 'No matching pending firewall policy')
+        config = _read_json(CONFIG_FILE, DEFAULT_CONFIG)
+        config['confirmed_token'] = body.token
+        _write_json(CONFIG_FILE, config)
+    return {'ok': True, 'message': 'Confirmation queued; check enforcement status'}

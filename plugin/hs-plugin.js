@@ -159,14 +159,16 @@
     const features=nav.querySelector('[data-hs-sub="features"]');
     const firewall=nav.querySelector('[data-hs-sub="firewall"]');
     const shieldActive=!!document.getElementById('hs-shield-root')||currentSection==='firewall';
-    if(parent)parent.dataset.active=(active||shieldActive)?'true':'false';
+    const serviceActive=!!window.HSServices?.isActive?.();
+    if(parent)parent.dataset.active=(active||shieldActive||serviceActive)?'true':'false';
     if(features)features.dataset.active=active?'true':'false';
     if(firewall)firewall.dataset.active=shieldActive?'true':'false';
-    if(active||shieldActive)suppressNativeActive();
+    if(active||shieldActive||serviceActive)suppressNativeActive();
   }
 
   function setSection(section){
     currentSection=section||null;
+    if(!section)restoreNativeActive();
     updateNavActive();
   }
 
@@ -228,6 +230,7 @@
     action.setAttribute('data-sidebar','menu-action');
     action.setAttribute('aria-label','Toggle HS Plugin menu');
     action.setAttribute('aria-expanded','false');
+    action.setAttribute('aria-controls',SUBMENU_ID);
     action.className='hs-plugin-menu-action';
     action.innerHTML=chevronIcon();
     action.addEventListener('click',event=>{
@@ -287,6 +290,8 @@
   }
 
   function getOutletHost(){
+    const compatible = window.HSPluginTabFix?.findOutlet?.();
+    if(compatible)return compatible;
     const inset=document.querySelector('main.dashboard-scroll')||document.querySelector('.dashboard-scroll');
     if(!inset)return null;
 
@@ -352,6 +357,7 @@
     }
 
     hideOutletContent(outlet);
+    if(window.HSPluginTabFix?.render)return window.HSPluginTabFix.render(outlet);
     let root=document.getElementById(ROOT_ID);
     if(root&&root.parentElement!==outlet)root.remove();
     root=document.getElementById(ROOT_ID);
@@ -434,6 +440,7 @@
       return;
     }
 
+    window.HSServices?.close?.();
     if(window.HSShieldDebug?.close)window.HSShieldDebug.close();
     currentSection='features';
     active=true;
