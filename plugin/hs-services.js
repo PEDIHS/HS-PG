@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const sections={features:'Features',firewall:'Firewall',certificates:'Certificates',outbounds:'Outbounds',mtproxy:'Telegram Proxy',fair:'Fair Use'};
+  const sections={features:'Features',certificates:'Certificates',outbounds:'Outbounds',mtproxy:'Telegram Proxy',fair:'Fair Use'};
   let active=null, outlet=null, hidden=[], timer=null, loading=false, snapshot=null;
   const fetcher=window.fetch.bind(window);
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -39,12 +39,11 @@
     `;document.head.appendChild(style);
   }
   function route(section){
-    if(section==='features'){close();window.HSShieldDebug?.close();window.HSPluginDebug?.open();}
-    else if(section==='firewall'){close();window.HSShieldDebug?.open();}
+    if(section==='features'){close();window.HSPluginDebug?.open();}
     else open(section);
   }
   function mountTabs(root,current){
-    let tabs=root.querySelector('#hs-plugin-top-tabs,#hs-shield-top-tabs,.hs-service-tabs');
+    let tabs=root.querySelector('#hs-plugin-top-tabs,.hs-service-tabs');
     if(!tabs)return;
     if(tabs.dataset.servicesTabs===current)return;
     tabs.dataset.servicesTabs=current;tabs.classList.add('hs-service-tabs');tabs.setAttribute('aria-label','HS Plugin sections');
@@ -76,7 +75,7 @@
   async function open(section){
     if(!sections[section])return;
     const state=await request('/api/hs-plugin/state').catch(()=>null);if(!state)return;
-    close();window.HSShieldDebug?.close();window.HSPluginDebug?.close();
+    close();window.HSPluginDebug?.close();
     outlet=window.HSPluginDebug?.getOutletHost?.();if(!outlet)return;
     active=section;window.HSPluginDebug?.setSection?.(section);hidden=[...outlet.children].map(el=>[el,el.style.display]);hidden.forEach(([el])=>el.style.display='none');
     const root=document.createElement('section');root.id='hs-services-root';root.innerHTML=`<nav class="hs-service-tabs"></nav><div class="hs-s-head"><div><span class="hs-s-badge">HS PLUGIN</span><h2>${sections[section]}</h2></div><button data-refresh type="button">Refresh</button></div><div class="hs-s-status" role="status" data-message></div><div data-body></div>`;outlet.appendChild(root);mountTabs(root,section);
