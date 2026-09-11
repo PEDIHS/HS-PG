@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.7.0';
+  const VERSION = '0.7.1';
   const STYLE_ID = 'hs-node-pro-style';
   const BLOCK_CLASS = 'hs-node-pro';
   const CARD_CLASS = 'hs-node-pro-card';
@@ -28,8 +28,11 @@
       isolation:isolate;
       min-width:0!important;
       overflow:hidden!important;
-      border-color:color-mix(in srgb,var(--border) 78%,#d7b261 22%)!important;
-      box-shadow:0 8px 24px rgba(0,0,0,.10),inset 0 1px rgba(229,195,108,.07)!important;
+      border:1px solid rgba(220,176,74,.76)!important;
+      box-shadow:
+        0 8px 24px rgba(0,0,0,.10),
+        0 0 10px rgba(220,176,74,.07),
+        inset 0 1px rgba(255,233,174,.12)!important;
       transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease!important;
     }
     .${CARD_CLASS}::before{
@@ -37,16 +40,20 @@
       position:absolute;
       z-index:3;
       top:0;
-      left:14px;
-      right:14px;
+      left:12px;
+      right:12px;
       height:1px;
       pointer-events:none;
-      opacity:.78;
-      background:linear-gradient(90deg,transparent,rgba(222,182,87,.72),rgba(56,232,140,.36),transparent);
+      opacity:.95;
+      background:linear-gradient(90deg,transparent,rgba(255,222,139,.58),rgba(255,239,192,.95),rgba(255,222,139,.58),transparent);
+      filter:drop-shadow(0 0 3px rgba(232,188,83,.38));
     }
     .${CARD_CLASS}:hover{
-      border-color:color-mix(in srgb,var(--border) 66%,#d7b261 34%)!important;
-      box-shadow:0 10px 28px rgba(0,0,0,.13),inset 0 1px rgba(229,195,108,.10)!important;
+      border-color:rgba(240,198,97,.95)!important;
+      box-shadow:
+        0 10px 28px rgba(0,0,0,.13),
+        0 0 14px rgba(223,177,69,.12),
+        inset 0 1px rgba(255,236,184,.16)!important;
     }
 
     .${BLOCK_CLASS}{
