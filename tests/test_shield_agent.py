@@ -57,9 +57,30 @@ def test_disabled_goes_standby():
     assert stage == "standby"
 
 
+def test_monitoring_can_be_disabled_without_disabling_static_firewall_config():
+    config = dict(DEFAULT_CONFIG)
+    config["enabled"] = True
+    config["telemetry_enabled"] = False
+    stage, reasons = stage_for(
+        config,
+        {"pps": 999999.0, "bps": 999999999.0, "syn_recv": 9999.0},
+        {"pps": 1.0, "bps": 1.0},
+    )
+    assert stage == "standby"
+    assert any("telemetry" in reason for reason in reasons)
+
+
+def test_low_cpu_and_guard_are_safe_defaults():
+    assert DEFAULT_CONFIG["low_cpu_mode"] is True
+    assert DEFAULT_CONFIG["telemetry_enabled"] is True
+    assert DEFAULT_CONFIG["integration_guard_enabled"] is True
+
+
 if __name__ == "__main__":
     test_normal_stage_under_baseline()
     test_elevated_stage_on_packet_spike()
     test_attack_stage_on_syn_pressure()
     test_disabled_goes_standby()
+    test_monitoring_can_be_disabled_without_disabling_static_firewall_config()
+    test_low_cpu_and_guard_are_safe_defaults()
     print("shield agent tests: OK")
