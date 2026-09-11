@@ -1,34 +1,420 @@
-(()=>{'use strict';
-const V='0.2.1',ROOT='hs-shield-root',STYLE='hs-shield-style',GROUP='hs-plugin-nav',SUB='hs-plugin-submenu',FW='hs-shield-nav',raw=window.fetch.bind(window);
-let active=false,allowed=false,open=false,poll=null,latest=null,error=null,queued=false;
-const menu='peer/menu-button relative flex h-8 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none ring-sidebar-ring transition-[width,height,padding,background-color] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 data-[active=true]:bg-sidebar-accent/70 data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:before:bg-primary data-[active=true]:before:absolute data-[active=true]:before:inset-y-1.5 data-[active=true]:before:start-0 data-[active=true]:before:w-0.5 data-[active=true]:before:rounded-full group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0';
-const sub='text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground relative flex h-7 min-w-0 items-center gap-2 overflow-hidden rounded-md px-2 text-sm outline-none focus-visible:ring-2 data-[active=true]:bg-sidebar-accent/70 data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:before:bg-primary data-[active=true]:before:absolute data-[active=true]:before:inset-y-1 data-[active=true]:before:start-0 data-[active=true]:before:w-0.5 data-[active=true]:before:rounded-full group-data-[collapsible=icon]:hidden [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0';
-const shield=(c='')=>`<svg class="${c}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 19 6v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6l7-3Z"/><path d="m9.5 12 1.7 1.7 3.5-4"/></svg>`;
-const plug=()=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22v-5M9 8V2M15 8V2M18 8v5a6 6 0 0 1-12 0V8Z"/></svg>`;
-const sliders=()=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>`;
-const css=`@keyframes hsp{50%{transform:scale(1.04);opacity:1}}@keyframes hss{to{transform:translateX(360%) rotate(18deg)}}@keyframes hsb{50%{opacity:1}}#${GROUP}[data-hs-open=true] .hs-chev{transform:rotate(90deg)}[dir=rtl] #${GROUP}[data-hs-open=true] .hs-chev{transform:rotate(-90deg)}#${SUB}[hidden]{display:none!important}#${SUB}{border-color:hsl(var(--sidebar-border));margin:.35rem .85rem 0;display:flex;min-width:0;flex-direction:column;gap:.25rem;border-left:1px solid;padding:.15rem .6rem}[dir=rtl] #${SUB}{border-left:0;border-right:1px solid}.hs-chev{transition:transform .18s}.hs-fw-dot{margin-inline-start:auto;width:6px;height:6px;border-radius:50%;background:#64748b}.hs-fw-dot.ok{background:#22c55e;box-shadow:0 0 7px #22c55e88}.hs-fw-dot.warn{background:#f59e0b;box-shadow:0 0 7px #f59e0b88}.hs-fw-dot.bad{background:#ef4444;box-shadow:0 0 9px #ef4444aa;animation:hsb 1s infinite}#${ROOT}{width:100%;color:hsl(var(--foreground));font-family:inherit}#${ROOT} *{box-sizing:border-box}#${ROOT} .w{padding:1rem;display:flex;flex-direction:column;gap:1rem}#${ROOT} .hero{position:relative;overflow:hidden;border:1px solid #d9b34c42;border-radius:18px;background:linear-gradient(135deg,#111814f7,#111f1bf0);padding:1.15rem;color:#f8fafc;box-shadow:0 12px 38px #0003}#${ROOT} .hero:before{content:'';position:absolute;inset:-90% auto -90% -30%;width:22%;background:linear-gradient(90deg,transparent,#ffeeaa18,transparent);animation:hss 7s linear infinite}#${ROOT} .hg{display:grid;grid-template-columns:1fr auto;gap:1rem;align-items:center}#${ROOT} .k{font-size:.68rem;letter-spacing:.16em;color:#d9b34c;font-weight:750}#${ROOT} h2{margin:.25rem 0;font-size:1.32rem}#${ROOT} .mut{font-size:.76rem;color:#cbd5e1aa}#${ROOT} .orb{width:76px;height:76px;border-radius:23px;display:grid;place-items:center;background:radial-gradient(circle,#22c55e35,#081914b8 62%,#050f0ceb);border:1px solid #d9b34c55;animation:hsp 3s ease-in-out infinite;opacity:.78}#${ROOT} .orb svg{width:34px;color:#e8ca6a}#${ROOT} .chips{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.8rem}#${ROOT} .chip{font-size:.66rem;padding:.28rem .5rem;border:1px solid #94a3b82d;border-radius:999px;background:#0f172a55}#${ROOT} .stages{display:grid;grid-template-columns:repeat(5,1fr);gap:.4rem}#${ROOT} .stage{padding:.62rem;border:1px solid hsl(var(--border));border-radius:12px;background:hsl(var(--card));font-size:.68rem;color:hsl(var(--muted-foreground))}#${ROOT} .stage b{display:block;color:hsl(var(--foreground));margin-top:.12rem}#${ROOT} .stage.on{border-color:#d9b34c77;box-shadow:inset 0 -2px #d9b34c}#${ROOT} .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.7rem}#${ROOT} .card,#${ROOT} .sec{border:1px solid hsl(var(--border));border-radius:14px;background:hsl(var(--card))}#${ROOT} .card{padding:.85rem}#${ROOT} .lab,#${ROOT} .small{font-size:.67rem;color:hsl(var(--muted-foreground))}#${ROOT} .val{font-size:1.16rem;font-weight:750;margin:.25rem 0}#${ROOT} .head{display:flex;align-items:center;justify-content:space-between;padding:.8rem .9rem;border-bottom:1px solid hsl(var(--border));font-size:.78rem;font-weight:700}#${ROOT} .layers{display:grid;grid-template-columns:repeat(5,1fr)}#${ROOT} .layer{padding:.8rem;border-right:1px solid hsl(var(--border));font-size:.7rem}#${ROOT} .layer:last-child{border:0}.ld{display:inline-block;width:7px;height:7px;border-radius:50%;background:#64748b;margin-right:.3rem}.ld.on{background:#22c55e;box-shadow:0 0 7px #22c55e88}#${ROOT} .main{display:grid;grid-template-columns:1.35fr .8fr;gap:.7rem}#${ROOT} .evt{display:grid;grid-template-columns:70px 1fr;gap:.6rem;padding:.62rem .9rem;border-bottom:1px solid hsl(var(--border));font-size:.68rem}#${ROOT} .evt:last-child{border:0}#${ROOT} .side{padding:.8rem .9rem}#${ROOT} .safe{font-size:.68rem;line-height:1.5;padding:.7rem;border:1px solid #22c55e2d;background:#22c55e10;border-radius:10px}#${ROOT} .row{display:flex;justify-content:space-between;gap:.7rem;padding:.48rem 0;border-bottom:1px dashed hsl(var(--border));font-size:.68rem}#${ROOT} .good{color:#22c55e}#${ROOT} .warn{color:#f59e0b}#${ROOT} .bad{color:#ef4444}@media(max-width:1000px){#${ROOT} .grid{grid-template-columns:1fr 1fr}#${ROOT} .layers{grid-template-columns:1fr 1fr 1fr}#${ROOT} .main{grid-template-columns:1fr}}@media(max-width:640px){#${ROOT} .w{padding:.7rem}#${ROOT} .hg{grid-template-columns:1fr}#${ROOT} .stages{grid-template-columns:1fr 1fr}#${ROOT} .grid{grid-template-columns:1fr 1fr}#${ROOT} .layers{grid-template-columns:1fr 1fr}}`;
-function style(){if(document.getElementById(STYLE))return;let s=document.createElement('style');s.id=STYLE;s.textContent=css;document.head.appendChild(s)}
-function headers(){let h=new Headers({'Content-Type':'application/json'}),t=localStorage.getItem('token');if(t)h.set('Authorization',`Bearer ${t}`);return h}
-async function owner(){try{let r=await raw('/api/hs-plugin/state',{credentials:'same-origin',headers:headers()});allowed=r.ok;return allowed}catch{allowed=false;return false}}
-async function status(){let r=await raw('/api/hs-shield/status',{credentials:'same-origin',headers:headers()}),d=await r.json().catch(()=>({}));if(!r.ok){let e=new Error(d.detail||`HTTP ${r.status}`);e.status=r.status;throw e}return d}
-const placeholder=(m='Telemetry backend pending activation')=>({status:{stage:'starting',metrics:{pps:0,mbps:0,syn_recv:0,established:0},baseline:{pps:0},layers:{hs_detector:{active:true,role:'observe-only detector'}},layers_ready:1,layers_total:5,origin:{state:'unknown',public_bindings:[]},stage_reasons:[m],api_pending:true},events:[]});
-function outlet(){let m=document.querySelector('main.dashboard-scroll')||document.querySelector('.dashboard-scroll');if(!m)return null;let sh=[...m.children].find(x=>x.tagName==='DIV'&&x.classList.contains('justify-between'))||[...m.querySelectorAll(':scope > div')].find(x=>x.classList.contains('justify-between'));if(!sh)return null;return [...sh.children].find(x=>x.tagName==='DIV'&&x.classList.contains('flex-1')&&!x.classList.contains('justify-between'))||[...sh.children].find(x=>x.tagName==='DIV')||null}
-function hide(o){[...o.children].forEach(x=>{if(x.id===ROOT)return;if(!x.hasAttribute('data-hs-shield-display'))x.setAttribute('data-hs-shield-display',x.style.display||'');x.style.display='none'})}
-function restore(o){[...o.children].forEach(x=>{if(x.hasAttribute('data-hs-shield-display')){x.style.display=x.getAttribute('data-hs-shield-display')||'';x.removeAttribute('data-hs-shield-display')}})}
-function setOpen(v){open=!!v;let g=document.getElementById(GROUP),u=document.getElementById(SUB),a=g?.querySelector('.hs-arr');if(g)g.dataset.hsOpen=open?'true':'false';if(u)u.hidden=!open;if(a){a.dataset.state=open?'open':'closed';a.setAttribute('aria-expanded',String(open))}}
-function dotStage(s){return s==='attack'||s==='lockdown'?'bad':s==='elevated'?'warn':s==='normal'||s==='standby'?'ok':''}
-function groupState(){let g=document.getElementById(GROUP);if(!g)return;let p=g.querySelector('.hs-parent'),f=g.querySelector('[data-hs-feature]'),w=g.querySelector(`#${FW} button`),pa=!!document.getElementById('hs-plugin-root')&&!active;if(p)p.dataset.active=pa||active?'true':'false';if(f)f.dataset.active=pa?'true':'false';if(w)w.dataset.active=active?'true':'false';let d=g.querySelector('.hs-fw-dot');if(d)d.className=`hs-fw-dot ${dotStage(latest?.status?.stage)}`}
-function group(){if(!allowed)return;document.getElementById('hs-shield-plugin-tabbar')?.remove();let g=document.getElementById(GROUP);if(!g)return;if(g.dataset.hsGrouped==='1'&&g.querySelector(`#${SUB}`)){groupState();return}let f=[...g.children].find(x=>x.matches?.('[data-sidebar="menu-button"]'))||g.querySelector('[data-sidebar="menu-button"]');if(!f)return;f.className=sub;f.title='Features';f.dataset.hsFeature='1';f.innerHTML=`${sliders()}<span>Features</span>`;f.addEventListener('click',()=>close(),true);let p=document.createElement('button');p.type='button';p.className=`${menu} hs-parent`;p.innerHTML=`${plug()}<span class="hs-gold">HS Plugin</span>`;p.onclick=e=>{e.preventDefault();e.stopPropagation();close();window.HSPluginDebug?.open?.()};let a=document.createElement('button');a.type='button';a.className='hs-arr text-sidebar-foreground absolute top-1.5 flex aspect-square w-5 items-center justify-center rounded-md p-0 transition-transform ltr:right-1 rtl:left-1 group-data-[collapsible=icon]:hidden';a.setAttribute('data-sidebar','menu-action');a.innerHTML='<svg class="hs-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>';a.onclick=e=>{e.preventDefault();e.stopPropagation();setOpen(!open)};let u=document.createElement('ul');u.id=SUB;u.setAttribute('data-sidebar','menu-sub');let fi=document.createElement('li');fi.appendChild(f);u.appendChild(fi);let wi=document.createElement('li');wi.id=FW;let b=document.createElement('button');b.type='button';b.className=sub;b.setAttribute('data-sidebar','menu-button');b.innerHTML=`${shield()}<span>Firewall</span><i class="hs-fw-dot"></i>`;b.onclick=e=>{e.preventDefault();e.stopPropagation();show()};wi.appendChild(b);u.appendChild(wi);g.replaceChildren(p,a,u);g.dataset.hsGrouped='1';g.classList.add('group/menu-item','relative');setOpen(false);groupState()}
-function suppress(){document.querySelectorAll('[data-sidebar="menu-button"][data-active="true"]').forEach(b=>{if(b.closest(`#${GROUP}`))return;if(!b.hasAttribute('data-hs-shield-prev'))b.setAttribute('data-hs-shield-prev',b.dataset.active||'false');b.dataset.active='false'})}
-function unsuppress(){document.querySelectorAll('[data-hs-shield-prev]').forEach(b=>{b.dataset.active=b.getAttribute('data-hs-shield-prev')||'false';b.removeAttribute('data-hs-shield-prev')})}
-function close(){if(!active){groupState();return}active=false;if(poll){clearInterval(poll);poll=null}let r=document.getElementById(ROOT),o=r?.parentElement||outlet();if(o)restore(o);r?.remove();unsuppress();groupState()}
-const esc=x=>String(x??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),fmt=x=>{x=Number(x)||0;return x>=1e6?(x/1e6).toFixed(1)+'M':x>=1e3?(x/1e3).toFixed(1)+'K':Math.round(x)},sl=s=>({starting:'Starting',standby:'Standby',normal:'Normal',elevated:'Elevated',attack:'Attack',lockdown:'Lockdown'})[s]||'Unknown';
-function render(d){latest=d||placeholder();let s=latest.status||{},m=s.metrics||{},ls=s.layers||{},ev=Array.isArray(latest.events)?latest.events:[],st=s.stage||'starting',or=s.origin||{},o=outlet();if(!o)return false;hide(o);let r=document.getElementById(ROOT);if(!r){r=document.createElement('section');r.id=ROOT;r.className='flex min-h-0 w-full flex-1 flex-col';o.appendChild(r)}let stages=['standby','normal','elevated','attack','lockdown'],reason=s.stage_reasons?.[0]||error||'Waiting for telemetry',oc=or.state==='hidden'?'good':or.state==='public'?'bad':'warn';r.innerHTML=`<div class="w"><section class="hero"><div class="hg"><div><div class="k">HS SHIELD • v${V}</div><h2>Panel Firewall Control Plane</h2><div class="mut">Live multi-stage protection telemetry. Observe mode is fail-open and does not touch panel traffic.</div><div class="chips"><span class="chip">Stage <b>${esc(sl(st))}</b></span><span class="chip">Mode <b>Observe</b></span><span class="chip">Origin <b>${esc(or.state||'unknown')}</b></span><span class="chip">Layers <b>${+s.layers_ready||0}/${+s.layers_total||0}</b></span>${s.api_pending?'<span class="chip">Backend <b>Pending</b></span>':''}</div></div><div class="orb">${shield()}</div></div></section><div class="stages">${stages.map((x,i)=>`<div class="stage ${x===st?'on':''}"><span>0${i}</span><b>${sl(x)}</b></div>`).join('')}</div><div class="grid"><div class="card"><div class="lab">Incoming packet rate</div><div class="val">${fmt(m.pps)} pps</div><div class="small">Baseline ${fmt(s.baseline?.pps)} pps</div></div><div class="card"><div class="lab">Network throughput</div><div class="val">${Number(m.mbps||0).toFixed(1)} Mbps</div><div class="small">Host-wide observation</div></div><div class="card"><div class="lab">TCP SYN-RECV</div><div class="val">${Math.round(+m.syn_recv||0)}</div><div class="small">Connection flood pressure</div></div><div class="card"><div class="lab">Established TCP</div><div class="val">${Math.round(+m.established||0)}</div><div class="small">Current TCP sessions</div></div></div><section class="sec"><div class="head">Protection layers <span class="small">live health</span></div><div class="layers">${Object.keys(ls).length?Object.entries(ls).map(([k,v])=>`<div class="layer"><b>${esc(k.replaceAll('_',' '))}</b><div class="small"><i class="ld ${v?.active?'on':''}"></i>${v?.active?'Active':'Not active'}</div><div class="small">${esc(v?.role||'layer')}</div></div>`).join(''):'<div class="layer">Waiting for discovery…</div>'}</div></section><div class="main"><section class="sec"><div class="head">Security timeline <button id="hs-fw-refresh" class="small">Refresh</button></div>${ev.length?ev.slice(0,20).map(e=>`<div class="evt"><span class="small">${esc((e.at||'').slice(11,19)||'--:--')}</span><span>${esc(e.message||e.kind||'Event')}</span></div>`).join(''):'<div class="evt"><span></span><span class="small">No security events yet.</span></div>'}</section><section class="sec"><div class="head">Safety & exposure <span class="small">fail-open</span></div><div class="side"><div class="safe"><b>Traffic is untouched</b><br>${s.api_pending?'Telemetry backend is waiting for activation.':'Observe mode cannot add firewall rules, restart PasarGuard or change Docker networking.'}</div><div class="row"><span>Current reason</span><b>${esc(reason)}</b></div><div class="row"><span>Origin exposure</span><b class="${oc}">${esc(or.state||'unknown')}</b></div><div class="row"><span>Public bindings</span><b>${Array.isArray(or.public_bindings)?or.public_bindings.length:0}</b></div><div class="row"><span>Traffic modified</span><b class="good">No</b></div><div class="row"><span>Fail-open</span><b class="good">Enabled</b></div></div></section></div></div>`;r.querySelector('#hs-fw-refresh')?.addEventListener('click',()=>refresh(true));groupState();return true}
-async function refresh(force=false){try{latest=await status();allowed=true;error=null}catch(e){error=e.message||'Telemetry unavailable';if(e.status===401||e.status===403){allowed=false;close();return}if(!allowed)await owner();latest=placeholder(error)}group();if(active||force)render(latest);groupState()}
-async function show(){if(!allowed)await owner();if(!allowed)return;window.HSPluginDebug?.close?.();if(!latest)await refresh(false);active=true;suppress();group();if(!render(latest)){setTimeout(()=>active&&render(latest),120)}if(poll)clearInterval(poll);poll=setInterval(()=>refresh(false),2000)}
-function navWatch(){document.addEventListener('click',e=>{if(!active)return;let t=e.target instanceof Element?e.target.closest('a,[data-sidebar="menu-button"]'):null;if(t&&!t.closest(`#${GROUP}`))setTimeout(close,0)},true)}
-function queue(){if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;group();groupState()})}
-async function boot(){style();navWatch();await owner();group();await refresh(false);new MutationObserver(queue).observe(document.documentElement,{childList:true,subtree:true});setInterval(()=>refresh(false),10000);console.info(`[HS Shield] ${V} loaded`)}
-window.HSShieldDebug={version:V,open:show,close,refresh:()=>refresh(true),getState:()=>latest,setMenuOpen:setOpen};
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
+(() => {
+  'use strict';
+
+  const VERSION = '0.2.2';
+  const ROOT_ID = 'hs-shield-root';
+  const STYLE_ID = 'hs-shield-style';
+  const TOP_TABS_ID = 'hs-shield-top-tabs';
+  const rawFetch = window.fetch.bind(window);
+
+  let active = false;
+  let allowed = false;
+  let pollTimer = null;
+  let latest = null;
+  let statusError = null;
+
+  const shieldIcon = (className='') => `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 19 6v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6l7-3Z"/><path d="m9.5 12 1.7 1.7 3.5-4"/></svg>`;
+  const slidersIcon = (className='') => `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>`;
+
+  const css = `
+    @keyframes hsShieldPulse{0%,100%{transform:scale(.98);opacity:.72}50%{transform:scale(1.035);opacity:1}}
+    @keyframes hsShieldSweep{0%{transform:translateX(-130%) rotate(18deg)}100%{transform:translateX(340%) rotate(18deg)}}
+    @keyframes hsShieldFlow{0%{background-position:0 50%}100%{background-position:200% 50%}}
+    #${ROOT_ID}{width:100%;color:hsl(var(--foreground));font-family:inherit}
+    #${ROOT_ID} *{box-sizing:border-box}
+    #${ROOT_ID} .hs-wrap{padding:1rem;display:flex;flex-direction:column;gap:1rem}
+    #${TOP_TABS_ID}{display:flex;align-items:center;gap:.35rem;width:max-content;max-width:100%;padding:.22rem;border:1px solid hsl(var(--border));border-radius:10px;background:hsl(var(--muted)/.35)}
+    #${TOP_TABS_ID} button{display:inline-flex;align-items:center;gap:.4rem;border:0;background:transparent;color:hsl(var(--muted-foreground));font:inherit;font-size:.75rem;padding:.42rem .7rem;border-radius:8px;cursor:pointer;transition:background-color .18s,color .18s,box-shadow .18s}
+    #${TOP_TABS_ID} button:hover{color:hsl(var(--foreground));background:hsl(var(--background)/.72)}
+    #${TOP_TABS_ID} button.hs-active{background:hsl(var(--background));color:hsl(var(--foreground));box-shadow:0 1px 2px rgba(0,0,0,.08)}
+    #${TOP_TABS_ID} svg{width:14px;height:14px;color:#d9b34c}
+    #${ROOT_ID} .hs-hero{position:relative;overflow:hidden;border:1px solid rgba(217,179,76,.22);border-radius:18px;background:linear-gradient(135deg,rgba(18,24,20,.96),rgba(17,31,27,.92));padding:1.1rem;color:#f8fafc;box-shadow:0 12px 38px rgba(0,0,0,.16)}
+    #${ROOT_ID} .hs-hero:before{content:'';position:absolute;inset:-80% auto -80% -25%;width:22%;background:linear-gradient(90deg,transparent,rgba(255,238,170,.08),transparent);animation:hsShieldSweep 7s linear infinite;pointer-events:none}
+    #${ROOT_ID} .hs-hero-grid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;align-items:center}
+    #${ROOT_ID} .hs-kicker{font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;color:#d9b34c;font-weight:700}
+    #${ROOT_ID} h2{margin:.25rem 0 .25rem;font-size:1.35rem;line-height:1.2;font-weight:760;letter-spacing:-.02em}
+    #${ROOT_ID} .hs-muted{color:rgba(226,232,240,.68);font-size:.78rem;line-height:1.5}
+    #${ROOT_ID} .hs-orb{width:78px;height:78px;border-radius:24px;display:grid;place-items:center;position:relative;background:radial-gradient(circle at 50% 42%,rgba(34,197,94,.24),rgba(8,25,20,.72) 60%,rgba(5,15,12,.92));border:1px solid rgba(217,179,76,.3);box-shadow:inset 0 0 24px rgba(34,197,94,.08),0 0 28px rgba(34,197,94,.09);animation:hsShieldPulse 3.2s ease-in-out infinite}
+    #${ROOT_ID} .hs-orb svg{width:34px;height:34px;color:#e8ca6a;filter:drop-shadow(0 0 8px rgba(232,202,106,.25))}
+    #${ROOT_ID} .hs-chip-row{display:flex;flex-wrap:wrap;gap:.45rem;margin-top:.85rem}
+    #${ROOT_ID} .hs-chip{display:inline-flex;align-items:center;gap:.35rem;padding:.3rem .52rem;border-radius:999px;font-size:.68rem;border:1px solid rgba(148,163,184,.18);background:rgba(15,23,42,.3);color:#dbe4ee}
+    #${ROOT_ID} .hs-chip strong{font-weight:700;color:#fff}
+    #${ROOT_ID} .hs-stagebar{display:grid;grid-template-columns:repeat(5,1fr);gap:.4rem}
+    #${ROOT_ID} .hs-stage{position:relative;padding:.65rem .6rem;border-radius:12px;border:1px solid hsl(var(--border));background:hsl(var(--card));font-size:.68rem;color:hsl(var(--muted-foreground));overflow:hidden}
+    #${ROOT_ID} .hs-stage b{display:block;color:hsl(var(--foreground));font-size:.74rem;margin-top:.15rem}
+    #${ROOT_ID} .hs-stage.active{border-color:rgba(217,179,76,.42);box-shadow:0 0 0 1px rgba(217,179,76,.08)}
+    #${ROOT_ID} .hs-stage.active:after{content:'';position:absolute;inset:auto 0 0;height:2px;background:linear-gradient(90deg,#8f650f,#f2d77d,#8f650f);background-size:200% 100%;animation:hsShieldFlow 2.4s linear infinite}
+    #${ROOT_ID} .hs-stage.attack{border-color:rgba(239,68,68,.5);background:rgba(127,29,29,.08)}
+    #${ROOT_ID} .hs-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem}
+    #${ROOT_ID} .hs-card{border:1px solid hsl(var(--border));border-radius:14px;background:hsl(var(--card));padding:.9rem;min-height:104px}
+    #${ROOT_ID} .hs-label{font-size:.68rem;color:hsl(var(--muted-foreground));margin-bottom:.35rem}
+    #${ROOT_ID} .hs-value{font-size:1.18rem;font-weight:750;letter-spacing:-.02em}
+    #${ROOT_ID} .hs-sub{font-size:.67rem;color:hsl(var(--muted-foreground));margin-top:.25rem;line-height:1.4}
+    #${ROOT_ID} .hs-section{border:1px solid hsl(var(--border));border-radius:16px;background:hsl(var(--card));overflow:hidden}
+    #${ROOT_ID} .hs-section-head{display:flex;align-items:center;justify-content:space-between;gap:.8rem;padding:.85rem 1rem;border-bottom:1px solid hsl(var(--border))}
+    #${ROOT_ID} .hs-section-head h3{font-size:.83rem;font-weight:700;margin:0}
+    #${ROOT_ID} .hs-pill{font-size:.64rem;padding:.23rem .45rem;border-radius:999px;border:1px solid hsl(var(--border));color:hsl(var(--muted-foreground))}
+    #${ROOT_ID} .hs-layers{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0}
+    #${ROOT_ID} .hs-layer{padding:.85rem;border-right:1px solid hsl(var(--border));min-height:88px}
+    #${ROOT_ID} .hs-layer:last-child{border-right:0}
+    #${ROOT_ID} .hs-layer-name{font-size:.7rem;font-weight:650;margin-bottom:.35rem;text-transform:capitalize}
+    #${ROOT_ID} .hs-layer-state{display:inline-flex;align-items:center;gap:.35rem;font-size:.67rem;color:hsl(var(--muted-foreground))}
+    #${ROOT_ID} .hs-dot{width:7px;height:7px;border-radius:999px;background:#64748b}
+    #${ROOT_ID} .hs-dot.on{background:#22c55e;box-shadow:0 0 7px rgba(34,197,94,.45)}
+    #${ROOT_ID} .hs-main{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.75fr);gap:.75rem}
+    #${ROOT_ID} .hs-event{display:grid;grid-template-columns:72px 9px 1fr;gap:.55rem;padding:.7rem 1rem;border-bottom:1px solid hsl(var(--border));align-items:start}
+    #${ROOT_ID} .hs-event:last-child{border-bottom:0}
+    #${ROOT_ID} .hs-event-time{font-size:.64rem;color:hsl(var(--muted-foreground));font-variant-numeric:tabular-nums}
+    #${ROOT_ID} .hs-event-dot{width:8px;height:8px;border-radius:999px;margin-top:.18rem;background:#64748b}
+    #${ROOT_ID} .hs-event-dot.stage{background:#d9b34c}
+    #${ROOT_ID} .hs-event-dot.agent{background:#22c55e}
+    #${ROOT_ID} .hs-event-title{font-size:.7rem;line-height:1.45}
+    #${ROOT_ID} .hs-side{padding:.9rem 1rem}
+    #${ROOT_ID} .hs-safe{padding:.75rem;border-radius:12px;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.16);font-size:.69rem;line-height:1.5}
+    #${ROOT_ID} .hs-safe strong{display:block;margin-bottom:.2rem;color:hsl(var(--foreground))}
+    #${ROOT_ID} .hs-row{display:flex;align-items:center;justify-content:space-between;gap:.7rem;padding:.55rem 0;border-bottom:1px dashed hsl(var(--border));font-size:.69rem}
+    #${ROOT_ID} .hs-row:last-child{border-bottom:0}
+    #${ROOT_ID} .hs-row span:first-child{color:hsl(var(--muted-foreground))}
+    #${ROOT_ID} .hs-good{color:#22c55e}
+    #${ROOT_ID} .hs-warn{color:#f59e0b}
+    #${ROOT_ID} .hs-bad{color:#ef4444}
+    #${ROOT_ID} .hs-refresh{border:1px solid hsl(var(--border));background:hsl(var(--background));color:hsl(var(--foreground));border-radius:9px;padding:.35rem .6rem;font-size:.67rem;cursor:pointer}
+    #${ROOT_ID} .hs-empty{padding:1rem;color:hsl(var(--muted-foreground));font-size:.7rem}
+    @media(max-width:1100px){#${ROOT_ID} .hs-grid{grid-template-columns:repeat(2,1fr)}#${ROOT_ID} .hs-layers{grid-template-columns:repeat(3,1fr)}#${ROOT_ID} .hs-main{grid-template-columns:1fr}}
+    @media(max-width:640px){#${ROOT_ID} .hs-wrap{padding:.75rem}#${ROOT_ID} .hs-hero-grid{grid-template-columns:1fr}#${ROOT_ID} .hs-orb{width:62px;height:62px;border-radius:20px}#${ROOT_ID} .hs-stagebar{grid-template-columns:1fr 1fr}#${ROOT_ID} .hs-grid{grid-template-columns:1fr 1fr}#${ROOT_ID} .hs-layers{grid-template-columns:1fr 1fr}#${ROOT_ID} .hs-event{grid-template-columns:58px 8px 1fr;padding:.65rem .75rem}}
+    @media(prefers-reduced-motion:reduce){#${ROOT_ID} .hs-orb,#${ROOT_ID} .hs-hero:before,#${ROOT_ID} .hs-stage.active:after{animation:none}}
+  `;
+
+  function injectStyle(){
+    if(document.getElementById(STYLE_ID))return;
+    const style=document.createElement('style');
+    style.id=STYLE_ID;
+    style.textContent=css;
+    document.head.appendChild(style);
+  }
+
+  function authHeaders(){
+    const headers=new Headers({'Content-Type':'application/json'});
+    const token=localStorage.getItem('token');
+    if(token)headers.set('Authorization',`Bearer ${token}`);
+    return headers;
+  }
+
+  async function probeOwner(){
+    try{
+      const response=await rawFetch('/api/hs-plugin/state',{credentials:'same-origin',headers:authHeaders()});
+      allowed=response.ok;
+      return allowed;
+    }catch(_error){
+      allowed=false;
+      return false;
+    }
+  }
+
+  async function shieldApi(){
+    const response=await rawFetch('/api/hs-shield/status',{credentials:'same-origin',headers:authHeaders()});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok){
+      const error=new Error(data.detail||`HTTP ${response.status}`);
+      error.status=response.status;
+      throw error;
+    }
+    return data;
+  }
+
+  function placeholderData(message='Telemetry backend pending activation'){
+    return {
+      status:{
+        stage:'starting',
+        updated_at:null,
+        metrics:{pps:0,mbps:0,syn_recv:0,established:0},
+        baseline:{pps:0},
+        layers:{hs_detector:{active:true,role:'observe-only detector'}},
+        layers_ready:1,
+        layers_total:5,
+        origin:{state:'unknown',public_bindings:[]},
+        stage_reasons:[message],
+        api_pending:true
+      },
+      events:[]
+    };
+  }
+
+  function getOutletHost(){
+    const fromPlugin=window.HSPluginDebug?.getOutletHost?.();
+    if(fromPlugin)return fromPlugin;
+
+    const inset=document.querySelector('main.dashboard-scroll')||document.querySelector('.dashboard-scroll');
+    if(!inset)return null;
+    const shell=[...inset.children].find(el=>el.tagName==='DIV'&&el.classList.contains('justify-between'))||[...inset.querySelectorAll(':scope > div')].find(el=>el.classList.contains('justify-between'))||null;
+    if(!shell)return null;
+    return [...shell.children].find(el=>el.tagName==='DIV'&&el.classList.contains('flex-1')&&!el.classList.contains('justify-between'))||[...shell.children].find(el=>el.tagName==='DIV')||null;
+  }
+
+  function hideOutlet(outlet){
+    [...outlet.children].forEach(el=>{
+      if(el.id===ROOT_ID)return;
+      if(!el.hasAttribute('data-hs-shield-display'))el.setAttribute('data-hs-shield-display',el.style.display||'');
+      el.style.display='none';
+    });
+  }
+
+  function restoreOutlet(outlet){
+    [...outlet.children].forEach(el=>{
+      if(!el.hasAttribute('data-hs-shield-display'))return;
+      el.style.display=el.getAttribute('data-hs-shield-display')||'';
+      el.removeAttribute('data-hs-shield-display');
+    });
+  }
+
+  function suppressNativeActive(){
+    document.querySelectorAll('[data-sidebar="menu-button"][data-active="true"],[data-sidebar="menu-sub-button"][data-active="true"]').forEach(button=>{
+      if(button.closest('#hs-plugin-nav'))return;
+      if(!button.hasAttribute('data-hs-shield-prev'))button.setAttribute('data-hs-shield-prev',button.dataset.active||'false');
+      button.dataset.active='false';
+    });
+  }
+
+  function restoreNativeActive(){
+    document.querySelectorAll('[data-hs-shield-prev]').forEach(button=>{
+      button.dataset.active=button.getAttribute('data-hs-shield-prev')||'false';
+      button.removeAttribute('data-hs-shield-prev');
+    });
+  }
+
+  function fmtRate(value){
+    const n=Number(value)||0;
+    if(n>=1e6)return `${(n/1e6).toFixed(1)}M`;
+    if(n>=1e3)return `${(n/1e3).toFixed(1)}K`;
+    return Math.round(n).toString();
+  }
+
+  function fmtTime(iso){
+    if(!iso)return '--:--';
+    const date=new Date(iso);
+    if(Number.isNaN(date.getTime()))return '--:--';
+    return date.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
+
+  function esc(value){
+    return String(value??'').replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+  }
+
+  function stageLabel(stage){
+    return ({starting:'Starting',standby:'Standby',normal:'Normal',elevated:'Elevated',attack:'Attack',lockdown:'Lockdown'})[stage]||'Unknown';
+  }
+
+  function layerName(key){
+    return ({cloudflare_tunnel:'Cloudflare Tunnel',haproxy:'HAProxy',nftables:'nftables',fastnetmon:'FastNetMon',hs_detector:'HS Detector'})[key]||key.replaceAll('_',' ');
+  }
+
+  function render(data){
+    latest=data||placeholderData();
+    const status=latest.status||{};
+    const metrics=status.metrics||{};
+    const layers=status.layers||{};
+    const events=Array.isArray(latest.events)?latest.events:[];
+    const stage=status.stage||'starting';
+    const origin=status.origin||{};
+    const outlet=getOutletHost();
+    if(!outlet)return false;
+
+    hideOutlet(outlet);
+    let root=document.getElementById(ROOT_ID);
+    if(root&&root.parentElement!==outlet)root.remove();
+    root=document.getElementById(ROOT_ID);
+    if(!root){
+      root=document.createElement('section');
+      root.id=ROOT_ID;
+      root.className='flex min-h-0 w-full flex-1 flex-col';
+      outlet.appendChild(root);
+    }
+
+    const reason=(Array.isArray(status.stage_reasons)&&status.stage_reasons[0])||statusError||'Waiting for telemetry';
+    const originClass=origin.state==='hidden'?'hs-good':origin.state==='public'?'hs-bad':'hs-warn';
+    const stages=['standby','normal','elevated','attack','lockdown'];
+    const pending=!!status.api_pending;
+
+    root.innerHTML=`<div class="hs-wrap">
+      <div id="${TOP_TABS_ID}">
+        <button type="button" data-hs-shield-tab="features">${slidersIcon()}<span>Features</span></button>
+        <button type="button" class="hs-active" data-hs-shield-tab="firewall">${shieldIcon()}<span>Firewall</span></button>
+      </div>
+
+      <section class="hs-hero">
+        <div class="hs-hero-grid">
+          <div>
+            <div class="hs-kicker">HS Shield • v${VERSION}</div>
+            <h2>Panel Firewall Control Plane</h2>
+            <div class="hs-muted">Multi-stage protection telemetry with a fail-open rollout. Observe mode never changes panel traffic.</div>
+            <div class="hs-chip-row">
+              <span class="hs-chip">Stage <strong>${esc(stageLabel(stage))}</strong></span>
+              <span class="hs-chip">Mode <strong>Observe</strong></span>
+              <span class="hs-chip">Origin <strong>${esc(origin.state||'unknown')}</strong></span>
+              <span class="hs-chip">Layers <strong>${Number(status.layers_ready)||0}/${Number(status.layers_total)||0}</strong></span>
+              ${pending?'<span class="hs-chip">Backend <strong>Pending activation</strong></span>':''}
+            </div>
+          </div>
+          <div class="hs-orb">${shieldIcon()}</div>
+        </div>
+      </section>
+
+      <div class="hs-stagebar">${stages.map((item,index)=>`<div class="hs-stage ${item===stage?'active':''} ${stage==='attack'&&item===stage?'attack':''}"><span>0${index}</span><b>${stageLabel(item)}</b></div>`).join('')}</div>
+
+      <div class="hs-grid">
+        <div class="hs-card"><div class="hs-label">Incoming packet rate</div><div class="hs-value">${fmtRate(metrics.pps)} <small style="font-size:.62em;font-weight:600">pps</small></div><div class="hs-sub">Adaptive baseline ${fmtRate(status.baseline?.pps||0)} pps</div></div>
+        <div class="hs-card"><div class="hs-label">Network throughput</div><div class="hs-value">${Number(metrics.mbps||0).toFixed(1)} <small style="font-size:.62em;font-weight:600">Mbps</small></div><div class="hs-sub">Host-wide observation, no packet interception</div></div>
+        <div class="hs-card"><div class="hs-label">TCP SYN-RECV</div><div class="hs-value">${Math.round(Number(metrics.syn_recv)||0)}</div><div class="hs-sub">Connection-flood pressure signal</div></div>
+        <div class="hs-card"><div class="hs-label">Established TCP</div><div class="hs-value">${Math.round(Number(metrics.established)||0)}</div><div class="hs-sub">Current host connection pressure</div></div>
+      </div>
+
+      <section class="hs-section">
+        <div class="hs-section-head"><h3>Protection layers</h3><span class="hs-pill">live health</span></div>
+        <div class="hs-layers">${Object.keys(layers).length?Object.entries(layers).map(([key,value])=>`<div class="hs-layer"><div class="hs-layer-name">${esc(layerName(key))}</div><div class="hs-layer-state"><i class="hs-dot ${value?.active?'on':''}"></i>${value?.active?'Active':'Not active'}</div><div class="hs-sub">${esc(value?.role||'layer')}</div></div>`).join(''):'<div class="hs-empty">Waiting for layer discovery…</div>'}</div>
+      </section>
+
+      <div class="hs-main">
+        <section class="hs-section">
+          <div class="hs-section-head"><h3>Security timeline</h3><button class="hs-refresh" id="hs-shield-refresh">Refresh</button></div>
+          ${events.length?events.slice(0,20).map(event=>`<div class="hs-event"><div class="hs-event-time">${esc(fmtTime(event.at))}</div><i class="hs-event-dot ${esc(event.kind||'')}"></i><div><div class="hs-event-title">${esc(event.message||event.kind||'Event')}</div><div class="hs-sub">Stage: ${esc(stageLabel(event.stage||'unknown'))}</div></div></div>`).join(''):'<div class="hs-empty">No security events recorded yet.</div>'}
+        </section>
+        <section class="hs-section">
+          <div class="hs-section-head"><h3>Safety & exposure</h3><span class="hs-pill">fail-open</span></div>
+          <div class="hs-side">
+            <div class="hs-safe"><strong>Traffic is untouched</strong>${pending?'Firewall UI is installed, but the read-only telemetry backend has not entered the running PasarGuard process yet.':'Observe mode cannot add firewall rules, restart PasarGuard, or change Docker networking.'}</div>
+            <div class="hs-row"><span>Current reason</span><b>${esc(reason)}</b></div>
+            <div class="hs-row"><span>Origin exposure</span><b class="${originClass}">${esc(origin.state||'unknown')}</b></div>
+            <div class="hs-row"><span>Public bindings</span><b>${Array.isArray(origin.public_bindings)?origin.public_bindings.length:0}</b></div>
+            <div class="hs-row"><span>Traffic modified</span><b class="hs-good">No</b></div>
+            <div class="hs-row"><span>Fail-open</span><b class="hs-good">Enabled</b></div>
+            <div class="hs-row"><span>Last telemetry</span><b>${esc(fmtTime(status.updated_at))}</b></div>
+          </div>
+        </section>
+      </div>
+    </div>`;
+
+    root.querySelector('[data-hs-shield-tab="features"]')?.addEventListener('click',event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+      window.HSPluginDebug?.open?.();
+    });
+    root.querySelector('#hs-shield-refresh')?.addEventListener('click',()=>refresh(true));
+    return true;
+  }
+
+  async function refresh(force=false){
+    try{
+      latest=await shieldApi();
+      allowed=true;
+      statusError=null;
+    }catch(error){
+      statusError=error.message||'Shield telemetry unavailable';
+      if(error.status===401||error.status===403){
+        allowed=false;
+        close();
+        return;
+      }
+      if(!allowed)await probeOwner();
+      if(allowed)latest=placeholderData(statusError);
+    }
+
+    if(active||force){
+      if(!render(latest))console.warn('[HS Shield] render skipped because dashboard outlet was not available');
+    }
+  }
+
+  function startPolling(){
+    stopPolling();
+    pollTimer=setInterval(()=>refresh(false),2000);
+  }
+
+  function stopPolling(){
+    if(pollTimer){
+      clearInterval(pollTimer);
+      pollTimer=null;
+    }
+  }
+
+  function close(){
+    if(!active){
+      window.HSPluginDebug?.setSection?.(null);
+      return;
+    }
+    active=false;
+    stopPolling();
+    const root=document.getElementById(ROOT_ID);
+    const outlet=root?.parentElement||getOutletHost();
+    if(outlet)restoreOutlet(outlet);
+    root?.remove();
+    restoreNativeActive();
+    window.HSPluginDebug?.setSection?.(null);
+  }
+
+  async function show(){
+    if(!allowed)await probeOwner();
+    if(!allowed)return;
+
+    const before=getOutletHost();
+    if(!before){
+      console.warn('[HS Shield] dashboard outlet is not ready; preserving current page');
+      return;
+    }
+
+    if(!latest)await refresh(false);
+    if(!latest)latest=placeholderData(statusError||undefined);
+
+    window.HSPluginDebug?.close?.();
+    const outlet=getOutletHost();
+    if(!outlet){
+      window.HSPluginDebug?.open?.();
+      return;
+    }
+
+    active=true;
+    suppressNativeActive();
+    window.HSPluginDebug?.setSection?.('firewall');
+
+    if(!render(latest)){
+      active=false;
+      restoreNativeActive();
+      window.HSPluginDebug?.setSection?.(null);
+      window.HSPluginDebug?.open?.();
+      return;
+    }
+
+    startPolling();
+  }
+
+  function watchNavigation(){
+    document.addEventListener('click',event=>{
+      if(!active)return;
+      const target=event.target instanceof Element?event.target.closest('a,[data-sidebar="menu-button"],[data-sidebar="menu-sub-button"]'):null;
+      if(!target||target.closest('#hs-plugin-nav'))return;
+      setTimeout(()=>{
+        if(active)close();
+      },0);
+    },true);
+  }
+
+  async function boot(){
+    injectStyle();
+    watchNavigation();
+    window.addEventListener('hs-shield:activate',()=>show());
+    await probeOwner();
+    await refresh(false);
+    setInterval(()=>refresh(false),10000);
+    console.info(`[HS Shield] ${VERSION} loaded`);
+  }
+
+  window.HSShieldDebug={
+    version:VERSION,
+    open:show,
+    close,
+    refresh:()=>refresh(true),
+    getState:()=>latest,
+    isActive:()=>active
+  };
+
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
