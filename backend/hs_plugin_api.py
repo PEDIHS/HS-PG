@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.db import AsyncSession, get_db
 from app.db.models import CoreConfig, Node, ProxyHost
+from app.hs_admin_time import get_admin_time_info, resume_all_suspended, set_admin_time_days
 from app.models.admin import AdminDetails
 from app.models.node import NodeListQuery
 from app.operation import OperatorType
@@ -36,6 +37,10 @@ class RatioBody(BaseModel):
     ratio: float = Field(ge=0, le=100)
 
 
+class AdminTimeBody(BaseModel):
+    days: int | None = Field(default=None, ge=1, le=36_500)
+
+
 def _default_state() -> dict:
     return {
         "version": 2,
@@ -43,8 +48,10 @@ def _default_state() -> dict:
             "host_usage_ratio": {"enabled": True},
             "node_pro": {"enabled": False},
             "backup_web": {"enabled": False},
+            "admin_time_limit": {"enabled": True},
         },
         "inbound_offsets": {},
+        "admin_time_limits": {},
         "updated_at": None,
     }
 
@@ -61,7 +68,9 @@ def _load_state() -> dict:
     features.setdefault("host_usage_ratio", {"enabled": True})
     features.setdefault("node_pro", {"enabled": False})
     features.setdefault("backup_web", {"enabled": False})
+    features.setdefault("admin_time_limit", {"enabled": True})
     value.setdefault("inbound_offsets", {})
+    value.setdefault("admin_time_limits", {})
     return value
 
 
@@ -159,12 +168,7 @@ def _resolve_inherited_node_ratio(
     nodes: list[dict],
     inbound_tag: str | None = None,
 ) -> tuple[float, int | None, str]:
-    """Resolve the Node ratio that should be shown as the Host baseline.
-
-    First prefer Nodes whose selected CoreConfig actually contains the Host's
-    inbound tag. This matches PasarGuard's Node->Core relation. Address and
-    single/common-ratio fallbacks cover older or unusual configurations.
-    """
+    """Resolve the Node ratio that should be shown as the Host baseline."""
     tag_matches = [n for n in nodes if inbound_tag and inbound_tag in n.get("inbound_tags", set())]
     candidates = tag_matches or nodes
 
@@ -307,18 +311,54 @@ async def set_feature(
     body: ToggleBody,
     _owner: AdminDetails = Depends(_require_owner),
 ):
-    if feature_name not in {"host_usage_ratio", "node_pro", "backup_web"}:
+    if feature_name not in {"host_usage_ratio", "node_pro", "backup_web", "admin_time_limit"}:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown HS Plugin feature")
     with _write_lock():
         state = _load_state()
         state.setdefault("features", {}).setdefault(feature_name, {})["enabled"] = body.enabled
         _save_state(state)
+
+    if feature_name == "admin_time_limit" and not body.enabled:
+        # Disabling the feature must never strand users in HS-expired state.
+        await resume_all_suspended()
+
     return {
         "ok": True,
         "feature": feature_name,
         "enabled": body.enabled,
         "requires_resync": feature_name == "host_usage_ratio",
     }
+
+
+@router.get("/admin-time/by-username/{username}")
+async def get_admin_time(
+    username: str,
+    db: AsyncSession = Depends(get_db),
+    _owner: AdminDetails = Depends(_require_owner),
+):
+    try:
+        return await get_admin_time_info(db, username)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found") from exc
+
+
+@router.put("/admin-time/by-username/{username}")
+async def set_admin_time(
+    username: str,
+    body: AdminTimeBody,
+    db: AsyncSession = Depends(get_db),
+    _owner: AdminDetails = Depends(_require_owner),
+):
+    try:
+        return await set_admin_time_days(db, username, body.days)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.put("/hosts/{host_id}/usage-ratio")
