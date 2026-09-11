@@ -1,0 +1,23 @@
+[Unit]
+Description=HS Plugin privileged Web Backup agent
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionPathExists=/opt/hs-pg/backend/hs_backup_agent.py
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/hs-pg/backend/hs_backup_agent.py
+Restart=on-failure
+RestartSec=2
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
