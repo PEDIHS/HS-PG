@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.3.0';
+  const VERSION = '1.4.0';
   const FEATURE = 'admin_time_limit';
   const FEATURE_CARD_ID = 'hs-admin-time-card';
   const ACCOUNT_PORTAL_ID = 'hs-account-overview-portal';
@@ -15,13 +15,18 @@
   let featureBusy = false;
   let account = null;
   let selfTime = null;
-  let accountBusy = false;
+  let accountRequestId = 0;
+  let featureRequestId = 0;
   let lastAccountFetch = 0;
   let lastFeatureFetch = 0;
+  let activeToken = localStorage.getItem('token') || '';
+  let activeRoute = routePath();
   let nativeStack = null;
   let nativeStackOldPaddingTop = '';
   let portalHeight = 0;
+  let positionRaf = 0;
   const formState = new WeakMap();
+  const draftCache = new Map();
   const pending = new Set();
 
   const isFa = () => {
@@ -29,6 +34,15 @@
     return lang.startsWith('fa') || document.documentElement.dir === 'rtl';
   };
   const tr = (en, fa) => (isFa() ? fa : en);
+
+  function routePath() {
+    const hash = window.location.hash || '';
+    if (hash.startsWith('#/')) return hash.slice(1).split('?')[0];
+    return window.location.pathname || '/';
+  }
+  const isDashboardRoute = () => ['/', '/dashboard'].includes(routePath());
+  const isAdminsRoute = () => routePath() === '/admins';
+  const currentToken = () => localStorage.getItem('token') || '';
 
   function injectStyle() {
     let style = document.getElementById('hs-admin-time-style');
@@ -39,32 +53,31 @@
     }
     style.textContent = `
       @keyframes hs-admin-gold{0%,70%,100%{background-position:0% 50%}84%{background-position:100% 50%}}
-      @keyframes hs-account-rise{0%{opacity:0;transform:translateY(12px) scale(.992)}100%{opacity:1;transform:translateY(0) scale(1)}}
+      @keyframes hs-account-rise{0%{opacity:0;transform:translateY(10px) scale(.994)}100%{opacity:1;transform:translateY(0) scale(1)}}
       @keyframes hs-account-glow{0%,100%{transform:translate3d(-12%,0,0) scale(1);opacity:.15}50%{transform:translate3d(16%,-6%,0) scale(1.12);opacity:.3}}
       @keyframes hs-account-shine{0%{transform:translateX(-160%) skewX(-18deg)}62%,100%{transform:translateX(300%) skewX(-18deg)}}
       .hs-admin-time-gold,.hs-account-gold{color:#e7bd59;background:linear-gradient(100deg,#b97918 0%,#e4b64b 24%,#fff0ab 46%,#d3a13a 60%,#f5d77e 80%,#b97918 100%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:hs-admin-gold 4.8s ease-in-out infinite;font-weight:700}
       .${FIELD_CLASS}{min-width:0}
       .${FIELD_CLASS}[data-hs-suspended="true"] .${INPUT_CLASS}{border-color:rgba(217,170,66,.65)!important;box-shadow:0 0 0 1px rgba(217,170,66,.08)}
-      #${ACCOUNT_PORTAL_ID}{position:absolute;z-index:25;pointer-events:none;animation:hs-account-rise .42s cubic-bezier(.2,.8,.2,1) both}
+      #${ACCOUNT_PORTAL_ID}{position:absolute;z-index:25;pointer-events:none;animation:hs-account-rise .32s cubic-bezier(.2,.8,.2,1) both}
       #${ACCOUNT_PORTAL_ID} .hs-account-shell{pointer-events:auto;isolation:isolate}
       #${ACCOUNT_PORTAL_ID} .hs-account-glow{animation:hs-account-glow 7s ease-in-out infinite}
-      #${ACCOUNT_PORTAL_ID} .hs-account-progress-fill{position:relative;overflow:hidden;transition:width .7s cubic-bezier(.2,.8,.2,1)}
+      #${ACCOUNT_PORTAL_ID} .hs-account-progress-fill{position:relative;overflow:hidden;transition:width .6s cubic-bezier(.2,.8,.2,1)}
       #${ACCOUNT_PORTAL_ID} .hs-account-progress-fill::after{content:"";position:absolute;inset:0 auto 0 0;width:34%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.34),transparent);animation:hs-account-shine 3.2s ease-in-out infinite}
-      #${ACCOUNT_PORTAL_ID} .hs-account-metric{transition:transform .2s ease,border-color .2s ease,background-color .2s ease}
+      #${ACCOUNT_PORTAL_ID} .hs-account-metric{transition:transform .18s ease,border-color .18s ease,background-color .18s ease}
       #${ACCOUNT_PORTAL_ID} .hs-account-metric:hover{transform:translateY(-2px)}
       #${ACCOUNT_PORTAL_ID} .hs-account-value{font-variant-numeric:tabular-nums}
       @media(prefers-reduced-motion:reduce){.hs-admin-time-gold,.hs-account-gold,#${ACCOUNT_PORTAL_ID},#${ACCOUNT_PORTAL_ID} .hs-account-glow,#${ACCOUNT_PORTAL_ID} .hs-account-progress-fill::after{animation:none!important}#${ACCOUNT_PORTAL_ID} .hs-account-progress-fill,#${ACCOUNT_PORTAL_ID} .hs-account-metric{transition:none!important}}
     `;
   }
 
-  function authHeaders(extra = {}) {
+  function authHeaders(extra = {}, token = currentToken()) {
     const headers = new Headers(extra);
-    const token = localStorage.getItem('token');
     if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
     return headers;
   }
 
-  async function request(path, options = {}, timeoutMs = 6500) {
+  async function request(path, options = {}, timeoutMs = 4500, token = currentToken()) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -74,7 +87,7 @@
         cache: 'no-store',
         ...rest,
         signal: controller.signal,
-        headers: authHeaders(supplied || {}),
+        headers: authHeaders(supplied || {}, token),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -94,14 +107,7 @@
       clearTimeout(timer);
     }
   }
-  const hsApi = (path, options = {}, timeoutMs) => request(`/api/hs-plugin${path}`, options, timeoutMs);
-
-  function routePath() {
-    const hash = window.location.hash || '';
-    if (hash.startsWith('#/')) return hash.slice(1).split('?')[0];
-    return window.location.pathname || '/';
-  }
-  const isDashboardRoute = () => ['/', '/dashboard'].includes(routePath());
+  const hsApi = (path, options = {}, timeoutMs, token) => request(`/api/hs-plugin${path}`, options, timeoutMs, token);
 
   function setText(el, value) {
     if (!el) return;
@@ -164,9 +170,9 @@
       const data = await hsApi(`/features/${FEATURE}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: !current})});
       enabled = !!data.enabled;
       syncSwitch(button, enabled);
-      window.dispatchEvent(new CustomEvent('hs-plugin-feature-changed', {detail: {feature: FEATURE, enabled}}));
       if (!enabled) removeFields();
-      await refreshAccount(true);
+      window.dispatchEvent(new CustomEvent('hs-plugin-feature-changed', {detail: {feature: FEATURE, enabled}}));
+      refreshAccount(true);
     } catch (error) {
       syncSwitch(button, current);
       flash(error.message, true);
@@ -190,9 +196,7 @@
       } catch (_) {}
     }
     let el = input.parentElement;
-    for (let i = 0; el && i < 6; i += 1, el = el.parentElement) {
-      if (el.classList?.contains('space-y-2')) return el;
-    }
+    for (let i = 0; el && i < 6; i += 1, el = el.parentElement) if (el.classList?.contains('space-y-2')) return el;
     return null;
   }
   function essentialsGrid(form) {
@@ -217,7 +221,7 @@
     return null;
   }
   function adminForms() {
-    if (!enabled || !ownerAccess) return [];
+    if (!enabled || !ownerAccess || !isAdminsRoute()) return [];
     return [...document.querySelectorAll('form')].filter(form => !!form.querySelector('input[name="username"]') && !!form.querySelector('input[name="password"]') && !!findDataLimitItem(form));
   }
 
@@ -228,10 +232,10 @@
     return `<div class="flex min-h-5 items-center justify-between gap-2"><label class="block" for="${id}"><span class="hs-admin-time-gold">Time</span><span class="text-muted-foreground ml-1 text-[11px] font-normal">HS · days</span></label><button type="button" data-hs-time-reset class="text-muted-foreground hover:bg-accent hover:text-foreground hidden h-7 items-center gap-1 rounded-md border px-2 text-[11px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50">${resetIcon()}<span>${tr('Reset', 'ریست')}</span></button></div><div class="relative min-w-0"><input id="${id}" class="${INPUT_CLASS} border-border bg-input placeholder:text-input-placeholder focus-visible:ring-ring flex h-9 w-full rounded-lg border px-3 py-2 pr-14 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50" type="number" dir="ltr" inputmode="numeric" min="1" max="${MAX_DAYS}" step="1" placeholder="Unlimited" autocomplete="off"><span class="text-muted-foreground pointer-events-none absolute inset-y-0 right-3 flex items-center text-[11px]">days</span></div><p class="hs-admin-time-status text-muted-foreground min-h-4 text-[11px]">${tr('Blank means unlimited time.', 'خالی = بدون محدودیت زمانی')}</p>`;
   }
   function setFieldStatus(field, text, kind = 'muted') {
-    const statusEl = field?.querySelector('.hs-admin-time-status');
-    if (!statusEl) return;
-    statusEl.className = `hs-admin-time-status min-h-4 text-[11px] ${kind === 'error' ? 'text-destructive' : kind === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`;
-    setText(statusEl, text);
+    const el = field?.querySelector('.hs-admin-time-status');
+    if (!el) return;
+    el.className = `hs-admin-time-status min-h-4 text-[11px] ${kind === 'error' ? 'text-destructive' : kind === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`;
+    setText(el, text);
   }
   function formatRemaining(seconds) {
     const total = Math.max(0, Math.floor(Number(seconds) || 0));
@@ -270,7 +274,8 @@
     }
     state.input.disabled = false;
     if (!state.touched) {
-      state.draft = info.suspended && info.duration_days ? String(info.duration_days) : info.configured && info.remaining_seconds != null ? String(Math.max(1, Math.ceil(Number(info.remaining_seconds) / 86400))) : '';
+      const cached = draftCache.get(state.username);
+      state.draft = cached ?? (info.suspended && info.duration_days ? String(info.duration_days) : info.configured && info.remaining_seconds != null ? String(Math.max(1, Math.ceil(Number(info.remaining_seconds) / 86400))) : '');
       if (state.input.value !== state.draft) state.input.value = state.draft;
     }
     state.field.dataset.hsSuspended = info.suspended ? 'true' : 'false';
@@ -310,9 +315,9 @@
       const info = await hsApi(`/admin-time/by-username/${encodeURIComponent(state.username)}/reset`, {method: 'POST'});
       state.touched = false;
       state.dirty = false;
+      draftCache.delete(state.username);
       applyInfoToField(state, info);
       flash(tr('Admin time reset successfully.', 'زمان ادمین با موفقیت ریست شد.'));
-      await refreshAccount(true);
     } catch (error) {
       flash(`HS Time: ${error.message}`, true);
     } finally {
@@ -332,6 +337,7 @@
       state.touched = true;
       state.dirty = true;
       state.draft = state.input.value;
+      if (state.username) draftCache.set(state.username, state.draft);
       state.input.setCustomValidity('');
       try {
         const days = parseDays(state.input);
@@ -352,14 +358,14 @@
     const editing = !!(form.querySelector('input[name="username"]')?.disabled || form.querySelector('input[name="username"]')?.readOnly);
     let state = formState.get(form);
     if (!state) {
-      state = {field: null, input: null, username, editing, touched: false, dirty: false, draft: '', loaded: false, hydrating: false, supported: true, info: null};
+      state = {field: null, input: null, username, editing, touched: false, dirty: false, draft: draftCache.get(username) ?? '', loaded: false, hydrating: false, supported: true, info: null};
       formState.set(form, state);
     } else if (state.username && username && state.username !== username) {
       state.username = username;
       state.editing = editing;
       state.touched = false;
       state.dirty = false;
-      state.draft = '';
+      state.draft = draftCache.get(username) ?? '';
       state.loaded = false;
       state.hydrating = false;
       state.supported = true;
@@ -390,21 +396,20 @@
     const username = form.querySelector('input[name="username"]')?.value?.trim();
     if (!username) return;
     let days;
-    try {
-      days = parseDays(state.input);
-    } catch (error) {
+    try { days = parseDays(state.input); }
+    catch (error) {
       state.input.setCustomValidity(error.message);
       state.input.reportValidity();
       event.preventDefault();
       event.stopImmediatePropagation?.();
       return;
     }
-    pending.add({dialog: form.closest('[role="dialog"]') || form.parentElement, username, days, editing: state.editing, startedAt: Date.now(), finalized: false});
+    pending.add({dialog: form.closest('[role="dialog"]') || form.parentElement, username, days, token: currentToken(), startedAt: Date.now(), finalized: false});
   }
   async function processPending() {
     for (const item of [...pending]) {
       if (item.finalized) continue;
-      if (Date.now() - item.startedAt > 20000) {
+      if (item.token !== currentToken() || Date.now() - item.startedAt > 20000) {
         pending.delete(item);
         continue;
       }
@@ -412,7 +417,8 @@
       item.finalized = true;
       pending.delete(item);
       try {
-        await hsApi(`/admin-time/by-username/${encodeURIComponent(item.username)}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({days: item.days})});
+        await hsApi(`/admin-time/by-username/${encodeURIComponent(item.username)}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({days: item.days})}, 4500, item.token);
+        draftCache.delete(item.username);
       } catch (error) {
         flash(tr(`Admin saved, but HS Time failed: ${error.message}`, `ادمین ذخیره شد اما HS Time خطا داد: ${error.message}`), true);
       }
@@ -427,8 +433,7 @@
     const bytes = Math.max(0, Number(value) || 0);
     if (bytes < 1024) return `${Math.round(bytes)} B`;
     const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
-    let current = bytes;
-    let unit = -1;
+    let current = bytes, unit = -1;
     do { current /= 1024; unit += 1; } while (current >= 1024 && unit < units.length - 1);
     return `${current.toFixed(current >= 100 ? 0 : current >= 10 ? 1 : 2)} ${units[unit]}`;
   }
@@ -441,9 +446,7 @@
     if (seconds == null) return tr('Unlimited', 'نامحدود');
     const total = Math.max(0, Math.floor(Number(seconds) || 0));
     if (total <= 0) return tr('Expired', 'منقضی');
-    const days = Math.floor(total / 86400);
-    const hours = Math.floor((total % 86400) / 3600);
-    const minutes = Math.floor((total % 3600) / 60);
+    const days = Math.floor(total / 86400), hours = Math.floor((total % 86400) / 3600), minutes = Math.floor((total % 3600) / 60);
     if (days > 0) return isFa() ? `${days} روز ${hours} ساعت` : `${days}d ${hours}h`;
     if (hours > 0) return isFa() ? `${hours} ساعت ${minutes} دقیقه` : `${hours}h ${minutes}m`;
     return isFa() ? `${minutes} دقیقه` : `${minutes}m`;
@@ -475,39 +478,52 @@
     return `<div class="hs-account-shell bg-card relative overflow-hidden rounded-xl border p-4 shadow-sm transition-all duration-300 hover:shadow-lg sm:p-5 lg:p-6"><div class="hs-account-glow pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-primary/20 blur-3xl"></div><div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-400/55 to-transparent"></div><div class="relative z-10"><div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div class="flex min-w-0 items-center gap-3"><div class="bg-primary/10 text-primary flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/10"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M4 19V8"/><path d="M10 19V5"/><path d="M16 19v-8"/><path d="M22 19V3"/><path d="M2 19h22"/></svg></div><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h3 class="text-base font-semibold sm:text-lg">${tr('Your Account', 'وضعیت اکانت شما')}</h3><span class="hs-account-gold text-[10px] tracking-wider">HS</span><span data-status class="rounded-md border px-2 py-0.5 text-[10px] font-medium"></span></div><p data-subtitle class="text-muted-foreground mt-1 text-xs"></p></div></div><div class="text-muted-foreground flex items-center gap-1.5 text-[11px]"><span class="relative flex h-2 w-2"><span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-30"></span><span class="relative inline-flex h-2 w-2 rounded-full bg-green-500"></span></span><span>${tr('Live', 'زنده')}</span></div></div><div class="grid grid-cols-1 gap-3 sm:grid-cols-3"><div class="hs-account-metric bg-background/65 rounded-xl border p-4"><div class="text-muted-foreground mb-2 text-[11px] font-medium">${tr('Available volume', 'حجم قابل استفاده')}</div><div data-total class="hs-account-value text-xl font-bold tracking-tight sm:text-2xl" dir="ltr"></div><div data-total-caption class="text-muted-foreground mt-1 text-[10px]"></div></div><div class="hs-account-metric bg-background/65 rounded-xl border p-4"><div class="text-muted-foreground mb-2 text-[11px] font-medium">${tr('Remaining volume', 'حجم باقی‌مانده')}</div><div data-remaining class="hs-account-value text-xl font-bold tracking-tight sm:text-2xl" dir="ltr"></div><div data-used class="text-muted-foreground mt-1 text-[10px]"></div></div><div class="hs-account-metric bg-background/65 rounded-xl border p-4"><div class="text-muted-foreground mb-2 text-[11px] font-medium">${tr('Remaining time', 'زمان باقی‌مانده')}</div><div data-time class="hs-account-value text-xl font-bold tracking-tight sm:text-2xl" dir="ltr"></div><div data-expiry class="text-muted-foreground mt-1 text-[10px]"></div></div></div><div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2"><div class="bg-muted/25 rounded-xl border p-3.5"><div class="mb-2 flex items-center justify-between gap-3 text-[11px]"><span class="text-muted-foreground">${tr('Traffic usage', 'مصرف حجم')}</span><span data-traffic-percent class="font-semibold" dir="ltr"></span></div><div class="bg-muted h-2.5 overflow-hidden rounded-full"><div data-traffic-fill class="hs-account-progress-fill bg-primary h-full rounded-full" style="width:0%"></div></div></div><div class="bg-muted/25 rounded-xl border p-3.5"><div class="mb-2 flex items-center justify-between gap-3 text-[11px]"><span class="text-muted-foreground">${tr('Account lifetime', 'زمان اعتبار اکانت')}</span><span data-time-percent class="font-semibold" dir="ltr"></span></div><div class="bg-muted h-2.5 overflow-hidden rounded-full"><div data-time-fill class="hs-account-progress-fill h-full rounded-full bg-amber-500" style="width:0%"></div></div></div></div></div></div>`;
   }
 
-  function ensurePortal() {
-    const isOwner = !!account?.role?.is_owner;
-    const shouldShow = !!account && !isOwner && isDashboardRoute();
-    let portal = document.getElementById(ACCOUNT_PORTAL_ID);
-    if (!shouldShow) {
-      portal?.remove();
-      restoreNativeStack();
-      return null;
-    }
-    if (!portal) {
-      portal = document.createElement('div');
-      portal.id = ACCOUNT_PORTAL_ID;
-      portal.innerHTML = accountCardMarkup();
-      document.body.appendChild(portal);
-    }
-    return portal;
-  }
   function restoreNativeStack() {
     if (nativeStack?.isConnected) nativeStack.style.paddingTop = nativeStackOldPaddingTop;
     nativeStack = null;
     nativeStackOldPaddingTop = '';
     portalHeight = 0;
   }
-  function positionPortal() {
+  function removePortal() {
+    document.getElementById(ACCOUNT_PORTAL_ID)?.remove();
+    restoreNativeStack();
+  }
+  function eligibleAccount() {
+    return !!account && !!selfTime && account.role?.is_owner === false && selfTime.supported !== false && isDashboardRoute() && currentToken() === activeToken;
+  }
+  function ensurePortal() {
+    if (!eligibleAccount()) {
+      removePortal();
+      return null;
+    }
+    let portal = document.getElementById(ACCOUNT_PORTAL_ID);
+    if (!portal) {
+      portal = document.createElement('div');
+      portal.id = ACCOUNT_PORTAL_ID;
+      portal.dataset.account = account.username || '';
+      portal.innerHTML = accountCardMarkup();
+      document.body.appendChild(portal);
+    } else if (portal.dataset.account !== (account.username || '')) {
+      removePortal();
+      return ensurePortal();
+    }
+    return portal;
+  }
+  function positionPortalNow() {
+    positionRaf = 0;
     const portal = ensurePortal();
     const stack = dashboardStack();
-    if (!portal || !stack) return;
+    if (!portal || !stack) {
+      if (portal) portal.style.visibility = 'hidden';
+      return;
+    }
     if (nativeStack !== stack) {
       restoreNativeStack();
       nativeStack = stack;
       nativeStackOldPaddingTop = stack.style.paddingTop || '';
     }
     const rect = stack.getBoundingClientRect();
+    portal.style.visibility = 'visible';
     portal.style.left = `${window.scrollX + rect.left}px`;
     portal.style.top = `${window.scrollY + rect.top}px`;
     portal.style.width = `${rect.width}px`;
@@ -515,14 +531,18 @@
     if (measured > 0) portalHeight = measured;
     if (portalHeight > 0) stack.style.paddingTop = `${portalHeight + 16}px`;
   }
+  function schedulePosition() {
+    if (positionRaf) return;
+    positionRaf = requestAnimationFrame(positionPortalNow);
+  }
   function renderAccountCard() {
     const portal = ensurePortal();
-    if (!portal || !account) return;
+    if (!portal) return;
     const s = accountState();
     const badge = portal.querySelector('[data-status]');
-    badge.textContent = s.state === 'expired' ? tr('Expired', 'منقضی') : s.state === 'warning' ? tr('Ending soon', 'رو به پایان') : tr('Active', 'فعال');
+    setText(badge, s.state === 'expired' ? tr('Expired', 'منقضی') : s.state === 'warning' ? tr('Ending soon', 'رو به پایان') : tr('Active', 'فعال'));
     badge.className = 'rounded-md border px-2 py-0.5 text-[10px] font-medium ' + (s.state === 'expired' ? 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400' : s.state === 'warning' ? 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400' : 'border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400');
-    setText(portal.querySelector('[data-subtitle]'), account.username ? tr(`Live allowance for ${account.username}`, `نمایش زنده اعتبار و حجم ${account.username}`) : tr('Live account allowance', 'نمایش زنده اعتبار اکانت'));
+    setText(portal.querySelector('[data-subtitle]'), tr(`Live allowance for ${account.username}`, `نمایش زنده اعتبار و حجم ${account.username}`));
     setText(portal.querySelector('[data-total]'), s.limit > 0 ? formatBytes(s.limit) : '∞');
     setText(portal.querySelector('[data-total-caption]'), s.limit > 0 ? tr('Total assigned traffic', 'کل حجم اختصاص داده‌شده') : tr('Unlimited traffic', 'حجم نامحدود'));
     setText(portal.querySelector('[data-remaining]'), s.limit > 0 ? formatBytes(s.remainingTraffic) : '∞');
@@ -538,50 +558,95 @@
     const timeFill = portal.querySelector('[data-time-fill]');
     setWidth(timeFill, s.timeConfigured ? s.timePercentRemaining : 100);
     timeFill.className = 'hs-account-progress-fill h-full rounded-full ' + (s.timeConfigured && s.timePercentRemaining <= 10 ? 'bg-red-500' : 'bg-amber-500');
-    positionPortal();
+    schedulePosition();
   }
 
   async function refreshAccount(force = false) {
-    if (accountBusy) return;
+    const token = currentToken();
+    if (!token) {
+      account = null;
+      selfTime = null;
+      removePortal();
+      return;
+    }
     if (!force && Date.now() - lastAccountFetch < 25000) return;
-    accountBusy = true;
-    try {
-      const adminResult = await Promise.allSettled([request('/api/admin', {}, 5000), hsApi('/admin-time/me', {}, 5000)]);
-      if (adminResult[0].status === 'fulfilled') account = adminResult[0].value;
-      else if (adminResult[0].reason?.status === 401) account = null;
-      if (adminResult[1].status === 'fulfilled') selfTime = adminResult[1].value;
-      else if ([401, 404].includes(adminResult[1].reason?.status)) selfTime = null;
-      lastAccountFetch = Date.now();
-    } finally {
-      accountBusy = false;
-      renderAccountCard();
-    }
-  }
-  async function refreshFeature(force = false) {
-    if (!force && Date.now() - lastFeatureFetch < 55000) return;
-    lastFeatureFetch = Date.now();
-    try {
-      const state = await hsApi('/state', {}, 5000);
-      ownerAccess = true;
-      enabled = !!state?.features?.[FEATURE]?.enabled;
-    } catch (error) {
-      if ([401, 403].includes(error.status)) ownerAccess = false;
-    }
-    ensureFeatureCard();
-    if (!enabled && ownerAccess) removeFields();
+    const id = ++accountRequestId;
+    const [adminResult, timeResult] = await Promise.allSettled([
+      request('/api/admin', {}, 4000, token),
+      hsApi('/admin-time/me', {}, 4000, token),
+    ]);
+    if (id !== accountRequestId || token !== currentToken() || token !== activeToken) return;
+    account = adminResult.status === 'fulfilled' ? adminResult.value : null;
+    selfTime = timeResult.status === 'fulfilled' ? timeResult.value : null;
+    lastAccountFetch = Date.now();
+    renderAccountCard();
   }
 
-  function lightweightSync() {
+  async function refreshFeature(force = false) {
+    const token = currentToken();
+    if (!token) {
+      ownerAccess = false;
+      document.getElementById(FEATURE_CARD_ID)?.remove();
+      return;
+    }
+    if (!force && Date.now() - lastFeatureFetch < 55000) return;
+    const id = ++featureRequestId;
+    const result = await hsApi('/state', {}, 4000, token).then(value => ({ok: true, value})).catch(error => ({ok: false, error}));
+    if (id !== featureRequestId || token !== currentToken() || token !== activeToken) return;
+    lastFeatureFetch = Date.now();
+    if (result.ok) {
+      ownerAccess = true;
+      enabled = !!result.value?.features?.[FEATURE]?.enabled;
+    } else {
+      ownerAccess = false;
+    }
+    ensureFeatureCard();
+    if (!ownerAccess || !enabled) removeFields();
+  }
+
+  function invalidateSession() {
+    accountRequestId += 1;
+    featureRequestId += 1;
+    account = null;
+    selfTime = null;
+    ownerAccess = false;
+    lastAccountFetch = 0;
+    lastFeatureFetch = 0;
+    pending.clear();
+    removePortal();
+    removeFields();
+    document.getElementById(FEATURE_CARD_ID)?.remove();
+  }
+
+  function handleContextChange(force = false) {
+    const token = currentToken();
+    const route = routePath();
+    const tokenChanged = token !== activeToken;
+    const routeChanged = route !== activeRoute;
+    if (!force && !tokenChanged && !routeChanged) return;
+
+    if (tokenChanged) {
+      activeToken = token;
+      invalidateSession();
+    }
+    if (routeChanged) {
+      activeRoute = route;
+      removePortal();
+      if (!isAdminsRoute()) removeFields();
+    }
+
+    if (token) {
+      refreshAccount(true);
+      refreshFeature(true);
+    }
+    if (isAdminsRoute()) syncAdminForms();
+  }
+
+  function syncAdminForms() {
+    if (!isAdminsRoute()) return;
     ensureFeatureCard();
     if (enabled && ownerAccess) adminForms().forEach(ensureField);
     processPending();
-    if (isDashboardRoute()) {
-      renderAccountCard();
-      positionPortal();
-    } else {
-      document.getElementById(ACCOUNT_PORTAL_ID)?.remove();
-      restoreNativeStack();
-    }
   }
 
   function start() {
@@ -589,33 +654,36 @@
     document.addEventListener('submit', event => {
       if (event.target instanceof HTMLFormElement && formState.has(event.target)) beginPending(event.target, event);
     }, true);
-    const routeRefresh = () => {
-      setTimeout(() => {
-        lightweightSync();
-        refreshAccount(true);
-      }, 120);
-    };
-    window.addEventListener('hashchange', routeRefresh);
-    window.addEventListener('popstate', routeRefresh);
-    window.addEventListener('resize', () => positionPortal(), {passive: true});
-    window.addEventListener('scroll', () => positionPortal(), {passive: true});
+    document.addEventListener('click', event => {
+      const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null;
+      if (!anchor) return;
+      const href = anchor.getAttribute('href') || '';
+      if (href.startsWith('#/') && href.slice(1).split('?')[0] !== routePath()) removePortal();
+    }, true);
+    window.addEventListener('hashchange', () => handleContextChange(true));
+    window.addEventListener('popstate', () => handleContextChange(true));
+    window.addEventListener('storage', event => { if (event.key === 'token') handleContextChange(true); });
+    window.addEventListener('resize', schedulePosition, {passive: true});
+    window.addEventListener('scroll', schedulePosition, {passive: true});
     window.addEventListener('hs-plugin-feature-changed', event => {
       if (event.detail?.feature !== FEATURE) return;
       enabled = !!event.detail.enabled;
       if (!enabled) removeFields();
-      lightweightSync();
+      syncAdminForms();
       refreshAccount(true);
     });
 
-    refreshFeature(true);
-    setTimeout(() => refreshAccount(true), 700);
-    setInterval(() => refreshFeature(false), 60000);
-    setInterval(() => refreshAccount(false), 30000);
-    setInterval(lightweightSync, 2000);
+    handleContextChange(true);
+    setInterval(() => handleContextChange(false), 100);
     setInterval(() => {
-      if (isDashboardRoute() && account) renderAccountCard();
-      processPending();
+      if (isAdminsRoute()) syncAdminForms();
+      else processPending();
+    }, 350);
+    setInterval(() => {
+      if (isDashboardRoute() && eligibleAccount()) renderAccountCard();
     }, 1000);
+    setInterval(() => refreshAccount(false), 30000);
+    setInterval(() => refreshFeature(false), 60000);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, {once: true});
@@ -624,8 +692,10 @@
   window.HSAdminTime = {
     version: VERSION,
     refresh: async () => {
-      await Promise.allSettled([refreshFeature(true), refreshAccount(true)]);
-      lightweightSync();
+      handleContextChange(true);
+      await Promise.allSettled([refreshAccount(true), refreshFeature(true)]);
+      syncAdminForms();
+      renderAccountCard();
     },
     get enabled() { return enabled; },
     diagnostics: () => ({
@@ -633,15 +703,19 @@
       enabled,
       ownerAccess,
       route: routePath(),
+      tokenChanged: currentToken() !== activeToken,
       fields: document.querySelectorAll(`.${FIELD_CLASS}`).length,
       account: account?.username || null,
-      owner: !!account?.role?.is_owner,
+      owner: account?.role?.is_owner ?? null,
+      supported: selfTime?.supported ?? null,
       dataLimit: account?.data_limit ?? null,
       usedTraffic: account?.used_traffic ?? null,
       timeConfigured: !!selfTime?.configured,
       accountPortal: !!document.getElementById(ACCOUNT_PORTAL_ID),
-      accountBusy,
+      portalAccount: document.getElementById(ACCOUNT_PORTAL_ID)?.dataset?.account || null,
       portalHeight,
+      accountRequestId,
+      featureRequestId,
     }),
   };
 })();
