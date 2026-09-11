@@ -116,11 +116,19 @@
       ['low_cpu_mode','Low CPU','12s sampling + cached health',config.low_cpu_mode!==false],
       ['integration_guard_enabled','Auto Repair','Re-apply HS after panel updates',config.integration_guard_enabled!==false]
     ];
-    panel.innerHTML=`<div class="hs-power-head"><div class="hs-power-title"><i></i>Shield controls</div><div class="hs-power-note">Independent controls • no PasarGuard restart</div></div><div class="hs-power-grid">${entries.map(([key,name,desc,on])=>`<div class="hs-power-item"><div class="hs-power-copy"><div class="hs-power-name">${name}</div><div class="hs-power-desc">${desc}</div></div><button type="button" class="hs-switch" role="switch" aria-label="${name}" aria-checked="${on?'true':'false'}" data-hs-power="${key}"></button></div>`).join('')}</div><div class="hs-power-result" role="status"></div>`;
-    const result=panel.querySelector('.hs-power-result');
+    if(!panel.dataset.ready){
+      panel.innerHTML=`<div class="hs-power-head"><div class="hs-power-title"><i></i>Shield controls</div><div class="hs-power-note">Independent controls • no PasarGuard restart</div></div><div class="hs-power-grid">${entries.map(([key,name,desc])=>`<div class="hs-power-item"><div class="hs-power-copy"><div class="hs-power-name">${name}</div><div class="hs-power-desc">${desc}</div></div><button type="button" class="hs-switch" role="switch" aria-label="${name}" aria-checked="false" data-hs-power="${key}"></button></div>`).join('')}</div><div class="hs-power-result" role="status"></div>`;
+      panel.dataset.ready='1';
+      panel.addEventListener('click',event=>{
+        const button=event.target instanceof Element?event.target.closest('[data-hs-power]'):null;
+        if(!button||saving)return;
+        setConfig(button.dataset.hsPower,button.getAttribute('aria-checked')!=='true',panel.querySelector('.hs-power-result'));
+      });
+    }
+    const stateByKey=Object.fromEntries(entries.map(([key,,,on])=>[key,on]));
     panel.querySelectorAll('[data-hs-power]').forEach(button=>{
+      button.setAttribute('aria-checked',stateByKey[button.dataset.hsPower]?'true':'false');
       button.disabled=saving;
-      button.addEventListener('click',()=>setConfig(button.dataset.hsPower,button.getAttribute('aria-checked')!=='true',result));
     });
   }
 
@@ -128,7 +136,7 @@
   function boot(){
     tick();
     timer=setInterval(()=>{if(!document.hidden)tick();},5000);
-    new MutationObserver(()=>requestAnimationFrame(()=>{draw();controls();})).observe(document.documentElement,{childList:true,subtree:true});
+    window.addEventListener('hs-shield:activate',()=>setTimeout(tick,80));
     window.addEventListener('beforeunload',()=>clearInterval(timer),{once:true});
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
