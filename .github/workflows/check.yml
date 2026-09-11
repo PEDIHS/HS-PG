@@ -15,10 +15,12 @@ jobs:
           node-version: '22'
       - name: Syntax and behavior checks
         run: |
-          python -m py_compile backend/*.py plugin/patch_pasarguard.py tests/*.py
+          python -m py_compile backend/*.py plugin/patch_pasarguard.py plugin/patch_backup_api.py tests/*.py
           python tests/test_runtime.py
           python tests/test_patcher.py
+          python tests/test_backup_agent.py
           node --check plugin/hs-plugin.js
           node --check plugin/hs-tab-fix.js
           node --check plugin/hs-node-pro.js
+          node --check plugin/hs-backup.js
           bash -n install.sh cli/hs-pg plugin/integrate-dashboard.sh
