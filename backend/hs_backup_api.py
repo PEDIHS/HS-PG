@@ -6,15 +6,19 @@ import http.client
 import json
 import os
 import re
+import secrets
+import shutil
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.datastructures import UploadFile
 
 from app.models.admin import AdminDetails
 from app.routers.authentication import get_current
@@ -32,6 +36,7 @@ AGENT_HOST = os.getenv("HS_BACKUP_AGENT_HOST", "127.0.0.1")
 AGENT_PORT = int(os.getenv("HS_BACKUP_AGENT_PORT", "8791"))
 MAX_UPLOAD_BYTES = int(os.getenv("HS_BACKUP_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024 * 1024)))
 UPLOAD_MANIFEST = "upload-manifest.json"
+DOWNLOAD_TICKET_TTL = 120
 _ID_CHARS = frozenset("0123456789abcdef")
 PART_RE = re.compile(r"^.+\.part\d{2}\.zip$", re.IGNORECASE)
 ZIP_SPLIT_RE = re.compile(r"^.+\.z\d{2}$", re.IGNORECASE)
@@ -214,6 +219,37 @@ async def _save_streamed_file(upload_dir: Path, index: int, name: str, reader, c
     return {"name": name, "stored": stored, "size": size}, current_total
 
 
+def _export_file(export_id: str) -> tuple[Path, str, Path]:
+    export_id = _safe_id(export_id, "export id")
+    directory = OUTBOX_DIR / export_id
+    meta_path = directory / "meta.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup export was not found") from exc
+
+    filename = Path(str(meta.get("filename") or "")).name
+    if not filename or filename != meta.get("filename"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup export metadata is invalid")
+    file_path = directory / filename
+    if not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup export file was not found")
+    return directory, filename, file_path
+
+
+def _backup_file_response(filename: str, file_path: Path) -> FileResponse:
+    return FileResponse(
+        path=file_path,
+        media_type="application/zip",
+        filename=filename,
+        headers={
+            "Cache-Control": "no-store, private",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("/feature")
 async def get_feature(_owner: AdminDetails = Depends(_require_owner)):
     state = _load_state()
@@ -276,27 +312,49 @@ async def download_backup(
     _owner: AdminDetails = Depends(_require_owner),
 ):
     _require_feature()
-    export_id = _safe_id(export_id, "export id")
-    directory = OUTBOX_DIR / export_id
-    meta_path = directory / "meta.json"
+    _directory, filename, file_path = _export_file(export_id)
+    return _backup_file_response(filename, file_path)
+
+
+@router.post("/ticket/{export_id}")
+async def create_download_ticket(
+    export_id: str,
+    _owner: AdminDetails = Depends(_require_owner),
+):
+    """Create a short-lived one-use ticket so the browser can stream a large file.
+
+    This avoids buffering multi-gigabyte backups into a JavaScript Blob merely
+    to attach the localStorage Authorization header.
+    """
+    _require_feature()
+    directory, _filename, _file_path = _export_file(export_id)
+    ticket = secrets.token_urlsafe(32)
+    payload = {"ticket": ticket, "expires_at": time.time() + DOWNLOAD_TICKET_TTL}
+    path = directory / ".download-ticket.json"
+    tmp = directory / ".download-ticket.tmp"
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+    return {"ticket": ticket, "expires_in": DOWNLOAD_TICKET_TTL}
+
+
+@router.get("/download-ticketed/{export_id}")
+async def download_backup_ticketed(export_id: str, ticket: str):
+    """Consume a one-use download ticket; no session/JWT is exposed in the URL."""
+    if not _feature_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup export was not found")
+    directory, filename, file_path = _export_file(export_id)
+    path = directory / ".download-ticket.json"
     try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup export was not found") from exc
-
-    filename = Path(str(meta.get("filename") or "")).name
-    if not filename or filename != meta.get("filename"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup export metadata is invalid")
-    file_path = directory / filename
-    if not file_path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup export file was not found")
-
-    return FileResponse(
-        path=file_path,
-        media_type="application/zip",
-        filename=filename,
-        headers={"Cache-Control": "no-store, private"},
-    )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        expected = str(payload.get("ticket") or "")
+        expires_at = float(payload.get("expires_at") or 0)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Download ticket is invalid") from exc
+    if expires_at < time.time() or not expected or not secrets.compare_digest(expected, str(ticket or "")):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Download ticket is invalid or expired")
+    path.unlink(missing_ok=True)
+    return _backup_file_response(filename, file_path)
 
 
 @router.post("/import")
@@ -378,12 +436,7 @@ async def import_backup(
             "size": total,
         }
     except Exception:
-        shutil_target = upload_dir
-        try:
-            import shutil
-            shutil.rmtree(shutil_target, ignore_errors=True)
-        except Exception:
-            pass
+        shutil.rmtree(upload_dir, ignore_errors=True)
         raise
     finally:
         for upload in uploads:
