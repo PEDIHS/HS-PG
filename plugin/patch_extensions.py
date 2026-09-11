@@ -82,7 +82,7 @@ def patch_subscription(text: str) -> str:
     if marker in text:
         return text
     pattern = re.compile(
-        r"(?m)^(?P<indent>[ \t]*)hosts = await filter_hosts\(list\(\(await host_manager\.get_hosts\(\)\)\.values\(\)\), user\.status\)\s*$"
+        r"(?m)^(?P<indent>[ \t]*)hosts = await filter_hosts\(list\(\(await host_manager\.get_hosts\(\)\)\.values\(\)\), user\.status\)[ \t]*$"
     )
     match = pattern.search(text)
     if not match:
@@ -117,7 +117,7 @@ def patch_usage_job(text: str) -> str:
     if user_pos < 0 or node_pos < 0 or node_pos <= user_pos:
         raise RuntimeError("record usage function anchors not found")
     segment = text[user_pos:node_pos]
-    matches = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)job_duration = time\.time\(\) - job_start_time\s*$", segment))
+    matches = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)job_duration = time\.time\(\) - job_start_time[ \t]*$", segment))
     if not matches:
         raise RuntimeError("user usage completion anchor not found")
     match = matches[-1]
