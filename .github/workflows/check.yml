@@ -23,4 +23,5 @@ jobs:
           node --check plugin/hs-tab-fix.js
           node --check plugin/hs-node-pro.js
           node --check plugin/hs-backup.js
+          node --check plugin/hs-backup-tab-watchdog.js
           bash -n install.sh cli/hs-pg plugin/integrate-dashboard.sh
