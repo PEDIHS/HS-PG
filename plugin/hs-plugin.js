@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.4';
+  const VERSION = '0.1.5';
   const NAV_ID = 'hs-plugin-nav';
   const ROOT_ID = 'hs-plugin-root';
   const STYLE_ID = 'hs-plugin-style';
@@ -141,37 +141,55 @@
     button.dataset.active=active?'true':'false';
     button.className=menuButtonClass;
     button.innerHTML=`${pluginIcon('hs-nav-icon')}<span class="hs-gold">HS Plugin</span>`;
-    button.addEventListener('click',activate);
+    button.addEventListener('click',event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      activate();
+    });
 
     li.appendChild(button);
     nodeItem.after(li);
     updateNavActive();
   }
 
+  function isDashboardShell(el){
+    return !!el&&el.tagName==='DIV'&&el.classList.contains('flex')&&el.classList.contains('min-h-0')&&el.classList.contains('w-full')&&el.classList.contains('flex-1')&&el.classList.contains('flex-col')&&el.classList.contains('justify-between');
+  }
+
+  function isPageTransition(el){
+    return !!el&&el.tagName==='DIV'&&el.classList.contains('flex')&&el.classList.contains('min-h-0')&&el.classList.contains('flex-1')&&el.classList.contains('flex-col')&&!el.classList.contains('justify-between');
+  }
+
   function getOutletHost(){
-    const inset=document.querySelector('main.dashboard-scroll')||document.querySelector('main');
+    const inset=document.querySelector('main.dashboard-scroll')||document.querySelector('.dashboard-scroll');
     if(!inset)return null;
 
-    const shell=[...inset.children].find(el=>
-      el.tagName==='DIV'&&
-      el.classList.contains('flex')&&
-      el.classList.contains('min-h-0')&&
-      el.classList.contains('w-full')&&
-      el.classList.contains('flex-1')&&
-      el.classList.contains('flex-col')&&
-      el.classList.contains('justify-between')
-    );
+    // PasarGuard _dashboard.tsx:
+    // SidebarInset.dashboard-scroll
+    //   -> shell (justify-between)
+    //      -> PageTransition.flex.min-h-0.flex-1.flex-col
+    //         -> Outlet
+    //      -> Footer
+    let shell=[...inset.children].find(isDashboardShell)||null;
+    if(!shell){
+      shell=[...inset.querySelectorAll(':scope > div')].find(isDashboardShell)||null;
+    }
     if(!shell)return null;
 
-    return [...shell.children].find(el=>
-      el.tagName==='DIV'&&
-      el.classList.contains('w-full')&&
-      el.classList.contains('flex')&&
-      el.classList.contains('min-h-0')&&
-      el.classList.contains('flex-1')&&
-      el.classList.contains('flex-col')&&
-      !el.classList.contains('justify-between')
-    )||null;
+    let outlet=[...shell.children].find(isPageTransition)||null;
+    if(outlet)return outlet;
+
+    // Fallback for harmless upstream class changes: PageTransition is the
+    // content sibling immediately before the Footer inside this shell.
+    const footer=[...shell.children].find(el=>el.tagName==='FOOTER'||el.querySelector?.('footer'))||null;
+    if(footer){
+      const previous=footer.previousElementSibling;
+      if(previous&&previous.tagName==='DIV')return previous;
+    }
+
+    // Last safe fallback: never replace SidebarInset itself; use only a direct
+    // non-footer DIV child of the known dashboard shell.
+    return [...shell.children].find(el=>el.tagName==='DIV'&&el.id!==ROOT_ID)||null;
   }
 
   function hideOutletContent(outlet){
@@ -192,9 +210,10 @@
 
   function deactivate(){
     active=false;
-    const outlet=getOutletHost();
+    const root=document.getElementById(ROOT_ID);
+    const outlet=root?.parentElement||getOutletHost();
     if(outlet)restoreOutletContent(outlet);
-    document.getElementById(ROOT_ID)?.remove();
+    root?.remove();
     restoreNativeActive();
     const button=document.querySelector(`#${NAV_ID} [data-sidebar="menu-button"]`);
     if(button)button.dataset.active='false';
@@ -216,12 +235,14 @@
   function render(){
     const outlet=getOutletHost();
     if(!outlet){
-      console.warn('[HS Plugin] PasarGuard Outlet host was not found; dashboard shell was left untouched.');
-      return;
+      console.error('[HS Plugin] PasarGuard PageTransition/Outlet host was not found. Dashboard shell was left untouched.');
+      return false;
     }
 
     hideOutletContent(outlet);
     let root=document.getElementById(ROOT_ID);
+    if(root&&root.parentElement!==outlet)root.remove();
+    root=document.getElementById(ROOT_ID);
     if(!root){
       root=document.createElement('section');
       root.id=ROOT_ID;
@@ -246,7 +267,7 @@
                     ${pluginIcon('hs-nav-icon h-4 w-4')}
                     <span>Host Usage Ratio</span>
                   </div>
-                  <p class="text-muted-foreground text-xs sm:text-sm">Enable final effective Usage Ratio controls inside the Host form.</p>
+                  <p class="text-muted-foreground text-xs sm:text-sm">Enable Usage Ratio controls inside the Host form.</p>
                 </div>
                 ${renderSwitch(enabled)}
               </div>
@@ -280,6 +301,7 @@
         toggle.disabled=false;
       }
     });
+    return true;
   }
 
   async function activate(){
@@ -290,7 +312,11 @@
     }
     active=true;
     updateNavActive();
-    render();
+    if(!render()){
+      active=false;
+      restoreNativeActive();
+      updateNavActive();
+    }
   }
 
   function matchEditingHost(dialog){
@@ -321,7 +347,7 @@
     wrap.innerHTML=`
       <label class="hs-host-label"><span class="hs-gold">Usage Ratio</span><span class="hs-host-badge">HS</span></label>
       <input class="${inputClass}" dir="ltr" type="number" min="0" max="100" step="0.05" value="${ratio}">
-      <div class="hs-host-help">${overridden?`Final ratio for this Host. Native Node ratio is ${nodeRatio}.`:`Inherited from Node Usage Ratio (${nodeRatio}). Enter another value to set the final ratio.`}</div>`;
+      <div class="hs-host-help">${overridden?`Current Node ratio: ${nodeRatio}. This Host keeps its configured offset relative to that Node.`:`Inherited from Node Usage Ratio (${nodeRatio}). Change it to add a Host-specific offset.`}</div>`;
     wrap.querySelector('input').addEventListener('input',()=>wrap.dataset.dirty='1');
     first.after(wrap);
   }
@@ -374,7 +400,8 @@
       const outlet=getOutletHost();
       if(outlet){
         hideOutletContent(outlet);
-        if(!document.getElementById(ROOT_ID))render();
+        const root=document.getElementById(ROOT_ID);
+        if(!root||root.parentElement!==outlet)render();
       }
     }
   }
@@ -395,9 +422,10 @@
     document.addEventListener('click',event=>{
       if(active&&!event.target.closest(`#${NAV_ID}`)&&event.target.closest('a'))deactivate();
     },true);
+    window.addEventListener('popstate',()=>{if(active)deactivate()});
     setInterval(()=>refreshState().then(queueMaintain),60000);
   }
 
-  window.HSPluginDebug={version:VERSION,refresh:refreshState,getState:()=>state,getError:()=>lastError,getOutletHost};
+  window.HSPluginDebug={version:VERSION,refresh:refreshState,getState:()=>state,getError:()=>lastError,getOutletHost,open:activate,close:deactivate};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
