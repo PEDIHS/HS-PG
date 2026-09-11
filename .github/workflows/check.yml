@@ -19,4 +19,5 @@ jobs:
           python tests/test_runtime.py
           python tests/test_patcher.py
           node --check plugin/hs-plugin.js
+          node --check plugin/hs-tab-fix.js
           bash -n install.sh cli/hs-pg plugin/integrate-dashboard.sh
