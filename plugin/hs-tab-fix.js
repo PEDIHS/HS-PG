@@ -4,11 +4,45 @@
   const ROOT_ID = 'hs-plugin-root';
   const NAV_ID = 'hs-plugin-nav';
   const QUERY_KEY = 'hs_plugin';
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
   const rawFetch = window.fetch.bind(window);
 
   let opening = false;
   let mountedOutlet = null;
+
+  function injectNodeProBrandStyle() {
+    if (document.getElementById('hs-node-pro-brand-style')) return;
+    const style = document.createElement('style');
+    style.id = 'hs-node-pro-brand-style';
+    style.textContent = `
+      @keyframes hs-node-title-gold-shine {
+        0%, 72%, 100% { background-position: 0% 50%; }
+        82% { background-position: 100% 50%; }
+      }
+
+      .hs-node-pro-card h3 {
+        color:#e9c46a!important;
+        background:linear-gradient(100deg,#b97a18 0%,#e5b84f 24%,#fff1ad 45%,#d6a43a 58%,#f7dc83 78%,#b97a18 100%);
+        background-size:220% 100%;
+        background-position:0% 50%;
+        -webkit-background-clip:text;
+        background-clip:text;
+        -webkit-text-fill-color:transparent;
+        text-shadow:0 0 7px rgba(235,190,78,.14);
+        filter:drop-shadow(0 1px 0 rgba(255,230,150,.08));
+        animation:hs-node-title-gold-shine 4.6s ease-in-out infinite;
+      }
+
+      .hs-node-pro-card:hover h3 {
+        text-shadow:0 0 9px rgba(244,198,82,.20);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .hs-node-pro-card h3 { animation:none; background-position:48% 50%; }
+      }
+    `;
+    document.head.appendChild(style);
+  }
 
   function authHeaders(extra) {
     const headers = new Headers(extra || {});
@@ -186,7 +220,7 @@
               </div>
               <div class="space-y-2">
                 ${featureCard('Host Usage Ratio', 'Enable or disable Usage Ratio controls inside Host.', 'hs-host-ratio-slot')}
-                ${featureCard('Node PRO', 'Enhance Node cards with realtime CPU, RAM, RX/TX traffic and uptime.', 'hs-node-pro-slot')}
+                ${featureCard('Node PRO', 'Enhance Node cards with compact realtime CPU and RAM charts.', 'hs-node-pro-slot')}
               </div>
               <div id="hs-tab-status" class="text-muted-foreground min-h-5 text-xs"></div>
             </div>
@@ -313,6 +347,7 @@
   });
 
   const boot = () => {
+    injectNodeProBrandStyle();
     if (requested()) openWithRetry();
   };
 
