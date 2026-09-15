@@ -7,8 +7,6 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes
 from app.db import get_db, AsyncSession
 from app.db.models import Node, CoreConfig
 from app.models.admin import AdminDetails
@@ -44,75 +42,15 @@ async def inventory(
     nodes = (await db.execute(select(Node))).scalars().all()
     reports = store.read("reports.json")
     targets = [dict(id="panel", name="Main panel")] + [
-        dict(id=str(n.id), name=n.name) for n in nodes
+        dict(id=str(n.id), name=n.name, core_id=n.core_config_id) for n in nodes
     ]
     for target in targets:
         report = reports.get(target["id"], {})
         target.update(report)
         target["online"] = time.time() - report.get("updated_at", 0) < 60
-    trust = []
-    from config import server_settings
-    from pathlib import Path
-
-    if server_settings.ssl_certfile:
-        try:
-            cert = x509.load_pem_x509_certificate(
-                Path(server_settings.ssl_certfile).read_bytes()
-            )
-            trust.append(
-                dict(
-                    id="panel-tls",
-                    target="panel",
-                    name="Panel TLS",
-                    provider="Panel TLS",
-                    expires_at=cert.not_valid_after_utc.timestamp(),
-                    starts_at=cert.not_valid_before_utc.timestamp(),
-                    issuer=cert.issuer.rfc4514_string(),
-                    renewable=False,
-                    note="Renew via the matching agent-managed certificate below; panel process may require restart",
-                )
-            )
-        except (OSError, ValueError) as exc:
-            trust.append(
-                dict(
-                    id="panel-tls",
-                    target="panel",
-                    name="Panel TLS",
-                    renewable=False,
-                    error=str(exc),
-                )
-            )
-
-    for node in nodes:
-        try:
-            cert = x509.load_pem_x509_certificate(node.server_ca.encode())
-            trust.append(
-                dict(
-                    id="node-ca-" + str(node.id),
-                    target=str(node.id),
-                    name=node.name,
-                    expires_at=cert.not_valid_after_utc.timestamp(),
-                    starts_at=cert.not_valid_before_utc.timestamp(),
-                    issuer=cert.issuer.rfc4514_string(),
-                    fingerprint=cert.fingerprint(hashes.SHA256()).hex(),
-                    provider="Node trust certificate",
-                    renewable=False,
-                    note="Trust rotation requires updating the node certificate/key and panel trust together",
-                )
-            )
-        except (ValueError, AttributeError):
-            trust.append(
-                dict(
-                    id="node-ca-" + str(node.id),
-                    target=str(node.id),
-                    name=node.name,
-                    error="Invalid or missing node trust certificate",
-                    renewable=False,
-                )
-            )
     return dict(
         targets=targets,
-        node_trust=trust,
+        node_trust=[],
         jobs=[public_job(j) for j in store.read("jobs.json", [])[-100:]][::-1],
     )
 
@@ -149,15 +87,19 @@ class Report(BaseModel):
     certificates: list[dict] = Field(default_factory=list, max_length=200)
     proxies: list[dict] = Field(default_factory=list, max_length=200)
     capabilities: dict = Field(default_factory=dict)
+    fair_use: dict = Field(default_factory=dict)
+    job_running: bool = False
 
 
 @router.post("/agents/{target}/poll")
-async def poll(body: Report, target: str = Depends(agent)):
+async def poll(body: Report, target: str = Depends(agent), db: AsyncSession = Depends(get_db)):
     with store.lock():
         reports = store.read("reports.json")
         reports[target] = {**body.model_dump(), "updated_at": time.time()}
         store.write("reports.json", reports)
-    return dict(job=store.claim(target))
+    from app.hs_fair_runtime import manifest
+    policy=await manifest(db,target)
+    return dict(job=None if body.job_running else store.claim(target), fair_policy=policy)
 
 
 class Completion(BaseModel):
@@ -194,7 +136,7 @@ async def renew(
         ),
         None,
     )
-    if not cert or not cert.get("renewable"):
+    if not cert or cert.get("provider")!="certbot" or not cert.get("renewable"):
         raise HTTPException(409, "Certificate cannot be renewed by this target agent")
     return public_job(store.enqueue(target, "renew", body.certificate_id))
 
@@ -350,11 +292,8 @@ class FairBody(BaseModel):
 
 @router.get("/fair-use")
 async def fair_settings(owner: AdminDetails = Depends(_require_owner)):
-    return dict(
-        policies=store.read("fair-use.json"),
-        enforcement_available=False,
-        blocker="The current PasarGuard node bridge has no per-user bandwidth setter. Policies are drafts until a compatible node rate adapter is installed and verified.",
-    )
+    reports=store.read('reports.json')
+    return dict(policies=store.read('fair-use.json'), enforcement_available=any(r.get('fair_use',{}).get('adapter')=='hs-rate-v1' and time.time()-r.get('fair_use',{}).get('updated_at',0)<25 for r in reports.values()), blocker='Per-user pacing requires the HS-enabled Xray core and connected node agent.')
 
 
 @router.put("/hosts/{host_id}/fair-use")
@@ -379,6 +318,13 @@ async def save_fair(
         .scalars()
         .all()
     )
+    if len(siblings) != 1:
+        raise HTTPException(409, 'This Host needs its own inbound for independent Fair Use. Another Host currently shares this inbound.')
+    core_rows=(await db.execute(select(CoreConfig))).scalars().all()
+    matching=[c for c in core_rows if any(i.get('tag')==host.inbound_tag and i.get('protocol') in {'vless','vmess','trojan','shadowsocks','socks','http'} for i in c.config.get('inbounds',[]))]
+    if len(matching)!=1:raise HTTPException(409,'Fair Use requires a unique supported Xray inbound.')
+    targets=(await db.execute(select(Node.id).where(Node.core_config_id==matching[0].id))).scalars().all()
+    if len(targets)!=1:raise HTTPException(409,'Use an inbound assigned to one node so this user has one aggregate bandwidth budget.')
     policy = validate_policy(body.model_dump())
     with store.lock():
         policies = store.read("fair-use.json")
@@ -391,7 +337,7 @@ async def save_fair(
                 )
         policies[str(host_id)] = policy
         store.write("fair-use.json", policies)
-    return dict(policy=policy, state="draft", enforced=False)
+    return dict(policy=policy, state="saved", enforced=False, note="The node applies this policy on its next synchronization.")
 
 
 @router.delete("/hosts/{host_id}/fair-use")

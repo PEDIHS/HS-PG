@@ -157,29 +157,16 @@
     if(!nav)return;
     const parent=nav.querySelector('[data-hs-parent]');
     const features=nav.querySelector('[data-hs-sub="features"]');
-    const firewall=nav.querySelector('[data-hs-sub="firewall"]');
-    const shieldActive=!!document.getElementById('hs-shield-root')||currentSection==='firewall';
     const serviceActive=!!window.HSServices?.isActive?.();
-    if(parent)parent.dataset.active=(active||shieldActive||serviceActive)?'true':'false';
+    if(parent)parent.dataset.active=(active||serviceActive)?'true':'false';
     if(features)features.dataset.active=active?'true':'false';
-    if(firewall)firewall.dataset.active=shieldActive?'true':'false';
-    if(active||shieldActive||serviceActive)suppressNativeActive();
+    if(active||serviceActive)suppressNativeActive();
   }
 
   function setSection(section){
     currentSection=section||null;
     if(!section)restoreNativeActive();
     updateNavActive();
-  }
-
-  function openFirewall(){
-    currentSection='firewall';
-    updateNavActive();
-    if(window.HSShieldDebug?.open){
-      window.HSShieldDebug.open();
-    }else{
-      window.dispatchEvent(new CustomEvent('hs-shield:activate'));
-    }
   }
 
   function ensureNav(){
@@ -259,22 +246,7 @@
     });
     featuresItem.appendChild(features);
 
-    const firewallItem=document.createElement('li');
-    const firewall=document.createElement('button');
-    firewall.type='button';
-    firewall.setAttribute('data-sidebar','menu-sub-button');
-    firewall.setAttribute('data-hs-sub','firewall');
-    firewall.dataset.active='false';
-    firewall.className=subButtonClass;
-    firewall.innerHTML=`${shieldIcon()}<span>Firewall</span>`;
-    firewall.addEventListener('click',event=>{
-      event.preventDefault();
-      event.stopPropagation();
-      openFirewall();
-    });
-    firewallItem.appendChild(firewall);
-
-    submenu.append(featuresItem,firewallItem);
+    submenu.append(featuresItem);
     li.append(parent,action,submenu);
     nodeItem.after(li);
     setMenuOpen(false);
@@ -381,7 +353,6 @@
 
               <div id="${TOP_TABS_ID}">
                 <button type="button" class="hs-active" data-hs-top-tab="features">${slidersIcon()}<span>Features</span></button>
-                <button type="button" data-hs-top-tab="firewall">${shieldIcon()}<span>Firewall</span></button>
               </div>
 
               <div class="bg-card hover:bg-accent/50 flex flex-row items-center justify-between space-y-0 gap-x-3 rounded-lg border p-3 transition-colors sm:p-4">
@@ -400,12 +371,6 @@
           </div>
         </div>
       </div>`;
-
-    root.querySelector('[data-hs-top-tab="firewall"]')?.addEventListener('click',event=>{
-      event.preventDefault();
-      event.stopPropagation();
-      openFirewall();
-    });
 
     const toggle=root.querySelector('#hs-feature-host-ratio');
     toggle?.addEventListener('click',async()=>{
@@ -441,7 +406,6 @@
     }
 
     window.HSServices?.close?.();
-    if(window.HSShieldDebug?.close)window.HSShieldDebug.close();
     currentSection='features';
     active=true;
     updateNavActive();
@@ -578,7 +542,6 @@
     getOutletHost,
     open:activate,
     close:deactivate,
-    openFirewall,
     setSection,
     setMenuOpen,
     getMenuOpen:()=>menuOpen,
