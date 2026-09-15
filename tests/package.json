@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "test:dom": "node dom-navigation.cjs",
-    "test:browser": "node ui-navigation.cjs"
+    "test:browser": "node ui-navigation.cjs && node node-pro-card.cjs"
   },
   "devDependencies": {
     "jsdom": "26.0.0",
