@@ -41,8 +41,9 @@ async def inventory(
 ):
     nodes = (await db.execute(select(Node))).scalars().all()
     reports = store.read("reports.json")
-    targets = [dict(id="panel", name="Main panel")] + [
-        dict(id=str(n.id), name=n.name, core_id=n.core_config_id) for n in nodes
+    enrolled = store.read("agents.json")
+    targets = [dict(id="panel", name="Main panel", enrolled=True)] + [
+        dict(id=str(n.id), name=n.name, core_id=n.core_config_id, enrolled=str(n.id) in enrolled) for n in nodes
     ]
     for target in targets:
         report = reports.get(target["id"], {})
@@ -64,6 +65,108 @@ async def enroll(
     if not target.isdigit() or not await db.get(Node, int(target)):
         raise HTTPException(404, "Node not found")
     return dict(target=target, token=store.enroll(target))
+
+
+@router.post("/agents/{target}/bootstrap")
+async def bootstrap(
+    target: str,
+    db: AsyncSession = Depends(get_db),
+    owner: AdminDetails = Depends(_require_owner),
+):
+    if not target.isdigit() or not await db.get(Node, int(target)):
+        raise HTTPException(404, "Node not found")
+    return dict(target=target, bootstrap_token=store.issue_bootstrap(target), expires_in=store.BOOTSTRAP_TTL)
+
+
+class BootstrapExchange(BaseModel):
+    bootstrap_token: str = Field(min_length=20, max_length=256)
+
+
+@router.post("/agents/{target}/exchange")
+async def exchange_bootstrap(
+    target: str, body: BootstrapExchange, db: AsyncSession = Depends(get_db)
+):
+    if not target.isdigit() or not await db.get(Node, int(target)):
+        raise HTTPException(404, "Node not found")
+    token = store.exchange_bootstrap(target, body.bootstrap_token)
+    if not token:
+        raise HTTPException(401, "Invalid or expired bootstrap token")
+    return dict(target=target, token=token, protocol="hs-bridge-v1")
+
+
+class NodeInstallBootstrap(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    address: str = Field(min_length=1, max_length=256)
+    core_id: int = Field(ge=1)
+    port: int = Field(default=62050, ge=1024, le=65535)
+    api_port: int = Field(default=62051, ge=1024, le=65535)
+    usage_coefficient: float = Field(default=1.0, ge=0, le=100)
+    keep_alive: int = Field(default=30, ge=0, le=3600)
+    default_timeout: int = Field(default=30, ge=3, le=300)
+    internal_timeout: int = Field(default=60, ge=3, le=60)
+
+
+@router.post("/node-bootstrap")
+async def node_bootstrap(
+    body: NodeInstallBootstrap,
+    db: AsyncSession = Depends(get_db),
+    owner: AdminDetails = Depends(_require_owner),
+):
+    if not await db.get(CoreConfig, body.core_id):
+        raise HTTPException(404, "Core not found")
+    spec = body.model_dump()
+    spec["issued_by"] = owner.username
+    token = store.issue_node_bootstrap(spec)
+    return dict(bootstrap_token=token, expires_in=store.BOOTSTRAP_TTL)
+
+
+class NodeInstallRegister(BaseModel):
+    bootstrap_token: str = Field(min_length=20, max_length=256)
+    api_key: str = Field(min_length=36, max_length=36)
+    server_ca: str = Field(min_length=64, max_length=12000)
+
+
+async def _register_pasarguard_node(db, spec, body):
+    from app.db.crud.node import create_node as create_db_node
+    from app.models.node import NodeCreate
+    from app.operation import OperatorType
+    from app.operation.node import NodeOperation
+    payload = NodeCreate(
+        name=spec["name"], address=spec["address"], port=spec["port"], api_port=spec["api_port"],
+        usage_coefficient=spec["usage_coefficient"], connection_type="grpc", server_ca=body.server_ca,
+        keep_alive=spec["keep_alive"], core_config_id=spec["core_id"], api_key=body.api_key,
+        data_limit=0, data_limit_reset_strategy="no_reset", reset_time=-1,
+        default_timeout=spec["default_timeout"], internal_timeout=spec["internal_timeout"],
+    )
+    existing = (await db.execute(select(Node).where(Node.name == spec["name"]))).scalar_one_or_none()
+    if existing:
+        for key, value in payload.model_dump().items():
+            setattr(existing, key, value)
+        await db.commit(); await db.refresh(existing); node = existing
+    else:
+        node = await create_db_node(db, payload)
+    operator = NodeOperation(operator_type=OperatorType.API)
+    await operator._update_node_impl(node)
+    asyncio.create_task(operator._connect_single_node_background(node.id, force_start=True))
+    return node
+
+
+@router.post("/node-register")
+async def node_register(body: NodeInstallRegister, db: AsyncSession = Depends(get_db)):
+    spec = store.consume_node_bootstrap(body.bootstrap_token)
+    if not spec:
+        raise HTTPException(401, "Invalid or expired bootstrap token")
+    if not await db.get(CoreConfig, int(spec["core_id"])):
+        raise HTTPException(409, "Core no longer exists")
+    try:
+        node = await _register_pasarguard_node(db, spec, body)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    token = store.enroll(str(node.id))
+    return dict(
+        target=str(node.id), token=token, protocol="hs-bridge-v1",
+        node=dict(id=node.id, name=node.name, address=node.address, port=node.port, api_port=node.api_port),
+    )
 
 
 @router.delete("/agents/{target}")
@@ -88,6 +191,9 @@ class Report(BaseModel):
     proxies: list[dict] = Field(default_factory=list, max_length=200)
     capabilities: dict = Field(default_factory=dict)
     fair_use: dict = Field(default_factory=dict)
+    bridge: dict = Field(default_factory=dict)
+    system: dict = Field(default_factory=dict)
+    pasarguard: dict = Field(default_factory=dict)
     job_running: bool = False
 
 
@@ -290,10 +396,71 @@ class FairBody(BaseModel):
     baseline_mbps: float = Field(gt=0, le=100000, allow_inf_nan=False)
 
 
+class GroupFairBody(BaseModel):
+    mode: str = Field(default="always", pattern="^(threshold|always)$")
+    threshold_bytes: int = Field(default=0, ge=0, le=2**53 - 1)
+    speed_percent: float = Field(ge=1, le=100, allow_inf_nan=False)
+    baseline_mbps: float = Field(gt=0, le=100000, allow_inf_nan=False)
+
+
+async def _expanded_host_fair(db):
+    from app.db.models import ProxyHost
+    from app.hs_fair_use import validate_policy
+    hosts=(await db.execute(select(ProxyHost))).scalars().all()
+    legacy=store.read("fair-use.json")
+    canonical=store.read("fair-use-inbounds.json")
+    grouped={}
+    for host in hosts:
+        if host.inbound_tag:
+            grouped.setdefault(host.inbound_tag,[]).append(host)
+    expanded={};shared={};migrations={}
+    for tag,items in grouped.items():
+        policy=None
+        value=canonical.get(tag)
+        if value:
+            try:policy=validate_policy(value)
+            except ValueError:pass
+        if policy is None:
+            for host in sorted(items,key=lambda value:value.id):
+                value=legacy.get(str(host.id))
+                if value:
+                    try:policy=validate_policy(value);migrations[tag]=policy;break
+                    except ValueError:pass
+        if policy is None:continue
+        ids=[int(host.id) for host in items]
+        for host in items:
+            expanded[str(host.id)]=policy
+            shared[str(host.id)]=ids
+    if migrations:
+        with store.lock():
+            current=store.read("fair-use-inbounds.json")
+            before=dict(current)
+            for tag,policy in migrations.items():current.setdefault(tag,policy)
+            if current!=before:store.write("fair-use-inbounds.json",current)
+    return expanded,shared
+
+
 @router.get("/fair-use")
-async def fair_settings(owner: AdminDetails = Depends(_require_owner)):
+async def fair_settings(
+    db: AsyncSession = Depends(get_db),
+    owner: AdminDetails = Depends(_require_owner),
+):
+    from app.db.models import Group
     reports=store.read('reports.json')
-    return dict(policies=store.read('fair-use.json'), enforcement_available=any(r.get('fair_use',{}).get('adapter')=='hs-rate-v1' and time.time()-r.get('fair_use',{}).get('updated_at',0)<25 for r in reports.values()), blocker='Per-user pacing requires the HS-enabled Xray core and connected node agent.')
+    policies,shared=await _expanded_host_fair(db)
+    group_rows=(await db.execute(select(Group.id,Group.name))).all()
+    return dict(
+        policies=policies,
+        group_policies=store.read('fair-use-groups.json'),
+        groups=[dict(id=int(identity),name=name) for identity,name in group_rows],
+        shared_hosts=shared,
+        enforcement_available=any(
+            r.get('fair_use',{}).get('adapter')=='hs-rate-v1'
+            and time.time()-r.get('fair_use',{}).get('updated_at',0)<25
+            for r in reports.values()
+        ),
+        blocker='Per-user pacing requires the HS-enabled Xray core and connected node agent.',
+    )
 
 
 @router.put("/hosts/{host_id}/fair-use")
@@ -309,44 +476,90 @@ async def save_fair(
     host = await db.get(ProxyHost, host_id)
     if not host:
         raise HTTPException(404, "Host not found")
-    siblings = (
-        (
-            await db.execute(
-                select(ProxyHost.id).where(ProxyHost.inbound_tag == host.inbound_tag)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if len(siblings) != 1:
-        raise HTTPException(409, 'This Host needs its own inbound for independent Fair Use. Another Host currently shares this inbound.')
+    if not host.inbound_tag:
+        raise HTTPException(422, "Host has no inbound")
+    siblings=(await db.execute(
+        select(ProxyHost).where(ProxyHost.inbound_tag==host.inbound_tag)
+    )).scalars().all()
     core_rows=(await db.execute(select(CoreConfig))).scalars().all()
-    matching=[c for c in core_rows if any(i.get('tag')==host.inbound_tag and i.get('protocol') in {'vless','vmess','trojan','shadowsocks','socks','http'} for i in c.config.get('inbounds',[]))]
-    if len(matching)!=1:raise HTTPException(409,'Fair Use requires a unique supported Xray inbound.')
-    targets=(await db.execute(select(Node.id).where(Node.core_config_id==matching[0].id))).scalars().all()
-    if len(targets)!=1:raise HTTPException(409,'Use an inbound assigned to one node so this user has one aggregate bandwidth budget.')
-    policy = validate_policy(body.model_dump())
+    matching=[c for c in core_rows if any(
+        i.get('tag')==host.inbound_tag
+        and i.get('protocol') in {'vless','vmess','trojan','shadowsocks','socks','http'}
+        for i in c.config.get('inbounds',[])
+    )]
+    if not matching:
+        raise HTTPException(409,'Fair Use requires a supported Xray inbound.')
+    policy=validate_policy(body.model_dump())
     with store.lock():
-        policies = store.read("fair-use.json")
-        for identity in siblings:
-            existing = policies.get(str(identity))
-            if identity != host_id and existing and existing != policy:
-                raise HTTPException(
-                    409,
-                    "Hosts sharing an inbound cannot have different speed policies. Use a dedicated inbound.",
-                )
-        policies[str(host_id)] = policy
-        store.write("fair-use.json", policies)
-    return dict(policy=policy, state="saved", enforced=False, note="The node applies this policy on its next synchronization.")
+        inbound_policies=store.read("fair-use-inbounds.json")
+        inbound_policies[host.inbound_tag]=policy
+        store.write("fair-use-inbounds.json",inbound_policies)
+        legacy=store.read("fair-use.json")
+        for sibling in siblings:
+            legacy[str(sibling.id)]=policy
+        store.write("fair-use.json",legacy)
+    return dict(
+        policy=policy,state="saved",enforced=False,
+        inbound_tag=host.inbound_tag,
+        affected_host_ids=sorted(int(s.id) for s in siblings),
+        affected_core_ids=sorted(int(c.id) for c in matching),
+        note="Saved with the Host. Every Host sharing this inbound uses the same policy.",
+    )
 
 
 @router.delete("/hosts/{host_id}/fair-use")
-async def delete_fair(host_id: int, owner: AdminDetails = Depends(_require_owner)):
+async def delete_fair(
+    host_id: int,
+    db: AsyncSession = Depends(get_db),
+    owner: AdminDetails = Depends(_require_owner),
+):
+    from app.db.models import ProxyHost
+    host=await db.get(ProxyHost,host_id)
+    if not host:raise HTTPException(404,"Host not found")
+    siblings=(await db.execute(
+        select(ProxyHost.id).where(ProxyHost.inbound_tag==host.inbound_tag)
+    )).scalars().all()
     with store.lock():
-        policies = store.read("fair-use.json")
-        policies.pop(str(host_id), None)
-        store.write("fair-use.json", policies)
-    return {"ok": True}
+        inbound_policies=store.read("fair-use-inbounds.json")
+        inbound_policies.pop(host.inbound_tag,None)
+        store.write("fair-use-inbounds.json",inbound_policies)
+        legacy=store.read("fair-use.json")
+        for identity in siblings:legacy.pop(str(identity),None)
+        store.write("fair-use.json",legacy)
+    return {"ok":True,"affected_host_ids":sorted(int(x) for x in siblings)}
+
+
+@router.put("/groups/{group_id}/fair-use")
+async def save_group_fair(
+    group_id:int,
+    body:GroupFairBody,
+    db:AsyncSession=Depends(get_db),
+    owner:AdminDetails=Depends(_require_owner),
+):
+    from app.db.models import Group
+    from app.hs_fair_use import validate_policy
+    group=await db.get(Group,group_id)
+    if not group:raise HTTPException(404,"Group not found")
+    value=body.model_dump()
+    if value['mode']=='threshold' and value['threshold_bytes']<=0:
+        raise HTTPException(422,"Threshold mode requires a positive traffic threshold")
+    policy=validate_policy(value)
+    with store.lock():
+        policies=store.read('fair-use-groups.json');policies[str(group_id)]=policy;store.write('fair-use-groups.json',policies)
+    return dict(policy=policy,state='saved',group_id=group_id,note='Saved with the Group and applied to every inbound assigned to it.')
+
+
+@router.delete("/groups/{group_id}/fair-use")
+async def delete_group_fair(
+    group_id:int,
+    db:AsyncSession=Depends(get_db),
+    owner:AdminDetails=Depends(_require_owner),
+):
+    from app.db.models import Group
+    if not await db.get(Group,group_id):raise HTTPException(404,"Group not found")
+    with store.lock():
+        policies=store.read('fair-use-groups.json');policies.pop(str(group_id),None);store.write('fair-use-groups.json',policies)
+    return {"ok":True}
 
 
 @router.get("/users/{user_id}/fair-use-preview")
@@ -373,9 +586,10 @@ async def fair_preview(
         .scalars()
         .all()
     )
+    policies,_=await _expanded_host_fair(db)
     return evaluate(
         dict(id=user.id, status=user.status, used_traffic=user.used_traffic),
-        store.read("fair-use.json"),
+        policies,
         ids,
         enforced=False,
     )

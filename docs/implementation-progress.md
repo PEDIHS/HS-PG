@@ -18,7 +18,7 @@ Recovery baseline: `7390611`; changes are applied on top of `3d897eee` without r
 - Feature disable restores native badges; native list metadata supports non-owner viewers.
 - SQL tests cover separate users, disabled groups, quota resets and host/node/core isolation.
 - Added a real VLESS upload/download test for aggregate pacing, user isolation and policy removal.
-- Independent Host enforcement requires a dedicated inbound on one node. HS-enabled Xray and the node agent must share the policy directory.
+- Fair Use is keyed by the effective inbound: Hosts sharing an inbound share one synchronized policy. Group policies support always-on or per-user threshold limits; Host/Group overlap uses the strictest active cap and node ACK gating remains mandatory.
 
 ## Checkpoint 3 — release verification
 

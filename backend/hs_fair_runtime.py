@@ -40,14 +40,29 @@ def ready(target, revision):
             and ack.get('adapter')=='hs-rate-v1' and ack.get('revision')==revision)
 
 
-def _replica_ready(state,target,record,uid,current,policies):
+def _policy_digest():
+    payload={
+        "inbounds":snapshot('fair-use-inbounds.json'),
+        "legacy_hosts":snapshot('fair-use.json'),
+        "groups":snapshot('fair-use-groups.json'),
+    }
+    return hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def _active(policy,used):
+    return policy.get('mode','threshold')=='always' or used>=int(policy.get('threshold_bytes',0))
+
+
+def _replica_ready(state,target,record,uid,current,policy_digest):
     revision=record.get('revision')
     expected={str(value) for value in record.get('targets',[target])} or {str(target)}
     for peer_target in expected:
         peer=state.get(peer_target)
-        if peer is None or peer.get('revision')!=revision or not ready(peer_target,revision):return False
+        if (peer is None or peer.get('revision')!=revision or peer.get('policy_digest')!=policy_digest
+                or not ready(peer_target,revision)):
+            return False
         if not set(current).issubset(peer.get('reached',{}).get(uid,[])):return False
-        if any(peer.get('policies',{}).get(h)!=policies[h] for h in current):return False
+        if any(peer.get('policies',{}).get(source)!=policy for source,policy in current.items()):return False
     return True
 
 
@@ -55,26 +70,29 @@ def user_state(user):
     native=str(getattr(getattr(user,'status','active'),'value',getattr(user,'status','active')))
     if native!='active' or not enabled():return None
     uid=str(user.id);used=max(0,int(user.used_traffic or 0))
-    state=snapshot('fair-runtime.json')
-    policies=snapshot('fair-use.json')
-    applicable={};pending=False
+    state=snapshot('fair-runtime.json');digest=_policy_digest()
+    applicable={};tags=set();pending=False
     for target,record in state.items():
-        ids=record.get('users',{}).get(uid,[])
-        current={h:policies[h] for h in ids if h in policies and used>=policies[h]['threshold_bytes']}
+        sources=record.get('users',{}).get(uid,[])
+        current={source:record.get('policies',{}).get(source) for source in sources}
+        current={source:policy for source,policy in current.items() if policy and _active(policy,used)}
         if not current:continue
-        if not _replica_ready(state,target,record,uid,current,policies):pending=True
+        if not _replica_ready(state,target,record,uid,current,digest):pending=True
         applicable.update(current)
+        source_tags=record.get('source_tags',{})
+        for source in current:tags.update(source_tags.get(source,[]))
     if not applicable:return None
-    return {'status':'active' if pending else 'fair_limited','pending':pending,'host_ids':list(applicable)}
+    return {
+        'status':'active' if pending else 'fair_limited','pending':pending,
+        'source_ids':sorted(applicable),'inbound_tags':sorted(tags),
+    }
 
 
-def filter_hosts(hosts, user):
+def filter_hosts(hosts,user):
     state=user_state(user)
     if not state or state['pending']:return [h for h in hosts.values() if not h.status or user.status in h.status]
-    # Only this user's eligible policy hosts; never match other hosts by shared tag.
-    policies=snapshot('fair-use.json')
-    tags=set(getattr(user,'inbounds',[]) or [])
-    return [host for identity,host in hosts.items() if str(identity) in policies and host.inbound_tag in tags]
+    tags=set(state.get('inbound_tags',[]))
+    return [host for host in hosts.values() if host.inbound_tag in tags and (not host.status or user.status in host.status)]
 
 
 async def manifest(db,target):
@@ -86,56 +104,87 @@ async def manifest(db,target):
     core=await db.get(CoreConfig,node.core_config_id)
     if core is None:return None
     tags={i['tag'] for i in core.config.get('inbounds',[]) if i.get('tag') and i.get('protocol') in {'vless','vmess','trojan','shadowsocks','socks','http'}}
-    cores=(await db.execute(select(CoreConfig))).scalars().all()
-    # A tag may be replicated by assigning the same Core to several Nodes. What is
-    # unsafe is the same tag being defined by different Core configs, where a Host
-    # identity no longer determines which policy should own the traffic.
-    tags={tag for tag in tags if sum(any(i.get('tag')==tag for i in c.config.get('inbounds',[])) for c in cores)==1}
     hosts=(await db.execute(select(ProxyHost).where(ProxyHost.inbound_tag.in_(tags)))).scalars().all()
-    policies=snapshot('fair-use.json') if enabled() else {}
-    # A connection identifies the inbound, not the subscription Host label.
-    # Never throttle another Host silently if it starts sharing that inbound.
-    counts = {}
-    for host in hosts:
-        counts[host.inbound_tag] = counts.get(host.inbound_tag, 0) + 1
-    configured={str(h.id):(h.inbound_tag,validate_policy(policies[str(h.id)])) for h in hosts if str(h.id) in policies and not h.is_disabled and counts[h.inbound_tag] == 1}
+    raw_hosts=snapshot('fair-use.json') if enabled() else {}
+    raw_inbounds=snapshot('fair-use-inbounds.json') if enabled() else {}
+    raw_groups=snapshot('fair-use-groups.json') if enabled() else {}
+    inbound_rules={};migrations={}
+    active_tags={host.inbound_tag for host in hosts if not host.is_disabled and host.inbound_tag}
+    for tag in sorted(active_tags):
+        value=raw_inbounds.get(tag)
+        if value:
+            try:inbound_rules[tag]=validate_policy(value);continue
+            except ValueError:pass
+        for host in sorted((item for item in hosts if item.inbound_tag==tag),key=lambda value:value.id):
+            value=raw_hosts.get(str(host.id))
+            if value:
+                try:
+                    inbound_rules[tag]=validate_policy(value);migrations[tag]=inbound_rules[tag];break
+                except ValueError:pass
+    if migrations:
+        with store.lock():
+            current=store.read('fair-use-inbounds.json');before=dict(current)
+            for tag,policy in migrations.items():current.setdefault(tag,policy)
+            if current!=before:store.write('fair-use-inbounds.json',current)
+    group_rules={}
+    for identity,value in raw_groups.items():
+        try:group_rules[str(identity)]=validate_policy(value)
+        except ValueError:pass
     peers=sorted(str(value) for value in (await db.execute(select(Node.id).where(Node.core_config_id==node.core_config_id))).scalars().all())
-    # Replicated Nodes using this exact Core receive the same Host policy. Every
-    # record carries the complete expected target set so a Node that never polls
-    # cannot be mistaken for an acknowledged replica.
-    rates={};users={};reached={}
-    rows=(await db.execute(select(User.id,User.used_traffic,ProxyInbound.tag).select_from(User)
+    rates={};users={};reached={};runtime_policies={};source_tags={}
+    rows=(await db.execute(select(User.id,User.used_traffic,Group.id,ProxyInbound.tag).select_from(User)
         .join(users_groups_association,users_groups_association.c.user_id==User.id)
         .join(Group,Group.id==users_groups_association.c.groups_id)
         .join(inbounds_groups_association,inbounds_groups_association.c.group_id==Group.id)
         .join(ProxyInbound,ProxyInbound.id==inbounds_groups_association.c.inbound_id)
-        .where(User.status=='active',Group.is_disabled.is_(False),ProxyInbound.tag.in_(tags)))).all() if configured else []
+        .where(User.status=='active',Group.is_disabled.is_(False),ProxyInbound.tag.in_(tags)))).all() if (inbound_rules or group_rules) else []
     by_user={}
-    for uid,used,tag in rows:
-        item=by_user.setdefault(str(uid),{'used':int(used or 0),'tags':set()});item['tags'].add(tag)
+    for uid,used,gid,tag in rows:
+        item=by_user.setdefault(str(uid),{'used':int(used or 0),'tags':{}})
+        item['tags'].setdefault(tag,set()).add(str(gid))
     for uid,user in by_user.items():
-        ids=[]
-        for identity,(tag,p) in configured.items():
-            if tag not in user['tags']:continue
-            ids.append(identity)
-            if user['used']>=p['threshold_bytes']:reached.setdefault(uid,[]).append(identity)
-            factor=p['speed_percent']/100 if user['used']>=p['threshold_bytes'] else 1
-            rates[uid+'\0'+tag]=max(1,int(p['baseline_mbps']*125000*factor))
-        if ids:users[uid]=ids
+        all_sources=set();hit=set()
+        for tag,gids in user['tags'].items():
+            entries=[]
+            if tag in inbound_rules:
+                source=f'i:{core.id}:{tag}';entries.append((source,inbound_rules[tag]))
+            for gid in gids:
+                if gid in group_rules:entries.append((f'g:{gid}',group_rules[gid]))
+            if not entries:continue
+            caps=[]
+            for source,policy in entries:
+                active=_active(policy,user['used'])
+                factor=policy['speed_percent']/100 if active else 1
+                caps.append(max(1,int(policy['baseline_mbps']*125000*factor)))
+                all_sources.add(source);runtime_policies[source]=policy
+                source_tags.setdefault(source,set()).add(tag)
+                if active:hit.add(source)
+            rates[uid+'\0'+tag]=min(caps)
+        if all_sources:users[uid]=sorted(all_sources)
+        if hit:reached[uid]=sorted(hit)
+    source_tags={key:sorted(value) for key,value in source_tags.items()}
     revision=hashlib.sha256(json.dumps(rates,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    policy_digest=_policy_digest()
     with store.lock():
-        runtime=store.read('fair-runtime.json');runtime[str(target)]={'revision':revision,'targets':peers,'users':users,'reached':reached,'policies':{h:policies[h] for h in configured},'updated_at':time.time()};store.write('fair-runtime.json',runtime)
+        runtime=store.read('fair-runtime.json')
+        runtime[str(target)]={
+            'revision':revision,'policy_digest':policy_digest,'targets':peers,'users':users,
+            'reached':reached,'policies':runtime_policies,'source_tags':source_tags,'updated_at':time.time(),
+        }
+        store.write('fair-runtime.json',runtime)
     return {'revision':revision,'rates':rates}
 
 
 def limited_groups():
     if not enabled():return {}
-    groups={};policies=snapshot('fair-use.json');state=snapshot('fair-runtime.json')
+    groups={};state=snapshot('fair-runtime.json');digest=_policy_digest()
     for target,record in state.items():
-        for uid,ids in record.get('reached',{}).items():
-            current={h:policies[h] for h in ids if h in policies}
-            if not current or not _replica_ready(state,target,record,uid,current,policies):continue
-            groups.setdefault(min(p['threshold_bytes'] for p in current.values()),set()).add(int(uid))
+        for uid,sources in record.get('reached',{}).items():
+            current={source:record.get('policies',{}).get(source) for source in sources}
+            current={source:policy for source,policy in current.items() if policy}
+            if not current or not _replica_ready(state,target,record,uid,current,digest):continue
+            threshold=min(int(policy.get('threshold_bytes',0)) for policy in current.values())
+            groups.setdefault(threshold,set()).add(int(uid))
     return groups
 
 

@@ -63,6 +63,74 @@ def authenticate(target, token):
     )
 
 
+BOOTSTRAP_TTL = 900
+
+def issue_bootstrap(target, ttl=BOOTSTRAP_TTL):
+    if type(ttl) is not int or not 60 <= ttl <= 3600:
+        raise ValueError("Invalid bootstrap lifetime")
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with lock():
+        records = read("enrollments.json")
+        records[str(target)] = {
+            "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+            "created_at": now,
+            "expires_at": now + ttl,
+        }
+        write("enrollments.json", records)
+    return token
+
+
+def exchange_bootstrap(target, token):
+    now = time.time()
+    with lock():
+        records = read("enrollments.json")
+        record = records.get(str(target), {})
+        expected = record.get("token_hash", "")
+        actual = hashlib.sha256(str(token).encode()).hexdigest()
+        if not expected or record.get("expires_at", 0) < now or not secrets.compare_digest(expected, actual):
+            return None
+        agent_token = secrets.token_urlsafe(48)
+        agents = read("agents.json")
+        agents[str(target)] = {
+            "token_hash": hashlib.sha256(agent_token.encode()).hexdigest(),
+            "created_at": now,
+            "enrollment": "one_time_bootstrap",
+        }
+        records.pop(str(target), None)
+        write("agents.json", agents)
+        write("enrollments.json", records)
+    return agent_token
+
+
+def issue_node_bootstrap(spec, ttl=BOOTSTRAP_TTL):
+    if type(ttl) is not int or not 60 <= ttl <= 3600:
+        raise ValueError("Invalid bootstrap lifetime")
+    token = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    now = time.time()
+    with lock():
+        records = read("node-enrollments.json")
+        records[digest] = {"spec": spec, "created_at": now, "expires_at": now + ttl}
+        write("node-enrollments.json", records)
+    return token
+
+
+def consume_node_bootstrap(token):
+    digest = hashlib.sha256(str(token).encode()).hexdigest()
+    now = time.time()
+    with lock():
+        records = read("node-enrollments.json")
+        record = records.get(digest)
+        if not record or record.get("expires_at", 0) < now:
+            records.pop(digest, None)
+            write("node-enrollments.json", records)
+            return None
+        records.pop(digest, None)
+        write("node-enrollments.json", records)
+    return record.get("spec")
+
+
 def enqueue(target, action, resource, payload=None):
     with lock():
         jobs = read("jobs.json", [])

@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const sections={features:'Features',certificates:'Certificates'};
+  const sections={features:'Features',nodes:'Node Bridge',certificates:'Certificates'};
   let active=null, outlet=null, hidden=[], timer=null, loading=false, snapshot=null;
   const fetcher=window.fetch.bind(window);
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -92,7 +92,7 @@
     root.querySelector('[data-refresh]').onclick=()=>render(root);
     document.querySelectorAll('[data-hs-service-nav]').forEach(b=>b.dataset.active=String(b.dataset.hsServiceNav===section));
     await render(root);
-    timer=setInterval(()=>{if(!document.hidden&&active==='certificates'&&!loading)render(root);},15000);
+    timer=setInterval(()=>{if(!document.hidden&&['nodes','certificates'].includes(active)&&!loading)render(root);},15000);
   }
   async function action(button,fn){
     button.disabled=true;const msg=button.closest('.hs-services-surface')?.querySelector('[data-message]');
@@ -106,6 +106,7 @@
     try{
       const data=await request('/api/hs-services/inventory');snapshot=data;
       if(!root.isConnected)return;
+      if(active==='nodes')await nodes(body,data);
       if(active==='certificates')certificates(body,data);
       if(active==='outbounds')await outbounds(body);
       if(active==='mtproxy')mtproxy(body,data);
@@ -114,6 +115,45 @@
     finally{loading=false;}
   }
   function jobs(data){return `<div style="overflow:auto;margin-top:18px"><h3>Recent operations</h3><table class="hs-s-table"><thead><tr><th>Operation</th><th>Target</th><th>Status</th><th>Result</th></tr></thead><tbody>${data.jobs.slice(0,15).map(j=>`<tr><td>${esc(j.action)}</td><td>${esc(j.target)}</td><td>${esc(j.state)}</td><td>${esc(j.error||j.result?.activation||'')}</td></tr>`).join('')}</tbody></table></div>`;}
+  function bytes(v){
+    let n=Number(v)||0;const u=['B','KB','MB','GB','TB'];let i=0;
+    while(n>=1024&&i<u.length-1){n/=1024;i++;}
+    return `${n.toFixed(i&&n<10?1:0)} ${u[i]}`;
+  }
+  async function nodes(body,data){
+    const coresData=await request('/api/cores');
+    const cores=coresData.cores||[];
+    const list=data.targets.filter(t=>t.id!=='panel');
+    const online=list.filter(t=>t.online).length;
+    body.innerHTML=`<div class="hs-cert-summary"><div><span class="hs-s-badge">HS NODE BRIDGE</span><h3>Secure node control plane</h3><p>Outbound HTTPS bridge for Fair Use, Certbot inventory and future HS node capabilities. No extra inbound management port is required.</p></div><div><strong>${online}/${list.length}</strong><span>Bridge online</span></div><div><strong>${list.filter(t=>t.enrolled).length}</strong><span>Enrolled</span></div><div><strong>${list.filter(t=>t.capabilities?.fair_rate_limit).length}</strong><span>Fair Core ACK</span></div></div><form class="hs-s-card" data-node-register style="margin-bottom:12px"><div class="hs-cert-top"><span class="hs-s-badge">ONE-STEP ENROLLMENT</span></div><h3>Register PasarGuard Node + HS Bridge</h3><p>Run PasarGuard Node installer first. This generates one temporary command; the node reads its own API key and certificate locally and sends them to this panel over HTTPS.</p><div class="hs-s-grid"><label>Name<input name="name" required placeholder="Poland"></label><label>Domain or IP<input name="address" required placeholder="node.example.com"></label><label>Core<select name="core_id" required>${cores.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></label><label>Usage Ratio<input name="usage_coefficient" type="number" min="0" max="100" step="0.1" value="1"></label></div><details><summary>Connection settings</summary><div class="hs-s-grid" style="margin-top:12px"><label>gRPC port<input name="port" type="number" value="62050" min="1024" max="65535"></label><label>Node API port<input name="api_port" type="number" value="62051" min="1024" max="65535"></label><label>Keep alive<input name="keep_alive" type="number" value="30" min="0" max="3600"></label><label>Timeout / internal<input name="timeouts" value="30,60" pattern="[0-9]+,[0-9]+"></label></div></details><div class="hs-s-actions" style="margin-top:14px"><button type="submit">Generate one-step installer</button></div><div data-new-node-install></div></form><div class="hs-s-grid">${list.map(t=>{
+      const sys=t.system||{},pg=t.pasarguard||{},bridge=t.bridge||{};
+      const ramUsed=Math.max(0,(Number(sys.memory_total)||0)-(Number(sys.memory_available)||0));
+      const state=t.online?'Online':t.enrolled?'Offline':'Not installed';
+      return `<article class="hs-s-card"><div class="hs-cert-top"><span class="hs-s-badge">Node ${esc(t.id)}</span><span class="hs-cert-online">${t.online?'●':'○'} ${state}</span></div><h3>${esc(t.name)}</h3><p>${bridge.version?`Bridge ${esc(bridge.version)} · ${esc(bridge.transport||'HTTPS')}`:'HS Bridge has not reported yet.'}</p><div class="hs-s-status">${pg.detected?`PasarGuard ${esc(pg.image||'node')}<br>Xray ${esc(pg.xray||'—')}`:'PasarGuard inventory unavailable'}${sys.hostname?`<br>${esc(sys.hostname)} · CPU ${esc(sys.cpu_cores||'—')} · RAM ${bytes(ramUsed)} / ${bytes(sys.memory_total)} · Disk free ${bytes(sys.disk_free)}`:''}<br>Certbot ${t.capabilities?.certbot?'ready':'not reported'} · Fair Use ${t.capabilities?.fair_rate_limit?'ACK ready':'not acknowledged'}</div><div class="hs-s-actions" style="margin-top:14px"><button data-bootstrap="${esc(t.id)}">${t.enrolled?'Rotate / reinstall Bridge':'Generate install command'}</button></div><div data-install-for="${esc(t.id)}"></div></article>`;
+    }).join('')||'<div class="hs-s-card"><h3>No PasarGuard nodes found</h3><p>Add the node to PasarGuard first, then return here to enroll HS Node Bridge.</p></div>'}</div>`;
+    const form=body.querySelector('[data-node-register]');
+    form.onsubmit=async e=>{
+      e.preventDefault();const f=new FormData(form);const parts=String(f.get('timeouts')||'30,60').split(',').map(Number);
+      const payload={name:f.get('name'),address:f.get('address'),core_id:Number(f.get('core_id')),port:Number(f.get('port')),api_port:Number(f.get('api_port')),usage_coefficient:Number(f.get('usage_coefficient')),keep_alive:Number(f.get('keep_alive')),default_timeout:parts[0]||30,internal_timeout:parts[1]||60};
+      const r=await action(form.querySelector('button[type=submit]'),()=>request('/api/hs-services/node-bootstrap',payload));if(!r)return;
+      const command=`curl -fsSL https://raw.githubusercontent.com/PEDIHS/HS-PG/main/plugin/install-node-bridge.sh | sudo bash -s -- '${location.origin}' auto '${r.bootstrap_token}'`;
+      const target=form.querySelector('[data-new-node-install]');
+      target.innerHTML=`<p><strong>One-time installer</strong> · expires in ${Math.round((r.expires_in||900)/60)} min. Run it as root on the PasarGuard node.</p><textarea readonly rows="3" style="min-height:76px">${esc(command)}</textarea><div class="hs-s-actions"><button type="button" data-copy-new>Copy command</button></div>`;
+      target.querySelector('[data-copy-new]').onclick=async ev=>{await navigator.clipboard.writeText(command);ev.currentTarget.textContent='Copied';};
+    };
+    body.querySelectorAll('[data-bootstrap]').forEach(button=>button.onclick=async()=>{
+      const id=button.dataset.bootstrap;
+      const r=await action(button,()=>request(`/api/hs-services/agents/${id}/bootstrap`,{}));
+      if(!r)return;
+      const command=`curl -fsSL https://raw.githubusercontent.com/PEDIHS/HS-PG/main/plugin/install-node-bridge.sh | sudo bash -s -- '${location.origin}' '${id}' '${r.bootstrap_token}'`;
+      const target=body.querySelector(`[data-install-for="${CSS.escape(id)}"]`);
+      target.innerHTML=`<p><strong>One-time installer</strong> · expires in ${Math.round((r.expires_in||900)/60)} min and becomes invalid after first use.</p><textarea readonly rows="3" style="min-height:76px" data-install-command>${esc(command)}</textarea><div class="hs-s-actions"><button data-copy-install>Copy command</button></div>`;
+      target.querySelector('[data-copy-install]').onclick=async e=>{
+        await navigator.clipboard.writeText(command);
+        e.currentTarget.textContent='Copied';
+      };
+    });
+  }
   function certificates(body,data){
     const cards=[];
     for(const target of data.targets)for(const cert of target.certificates||[])cards.push({...cert,target:target.id,targetName:target.name,online:target.online});
@@ -126,9 +166,8 @@
       const progress=c.expires_at&&c.starts_at?Math.max(0,Math.min(100,(c.expires_at-Date.now()/1000)/(c.expires_at-c.starts_at)*100)):0;
       const renewing=busy.has(c.target+':'+c.id);
       return `<article class="hs-s-card hs-cert-card"><div class="hs-cert-top"><span class="hs-cert-icon" style="color:${color}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7z"/><path d="m8 12 3 3 5-6"/></svg></span><span class="hs-s-badge">${esc(c.targetName)}</span><span class="hs-cert-online">${c.online?'● Online':'○ Offline'}</span></div><h3>${esc(c.domains?.[0]||c.id)}</h3><p class="hs-cert-domains">${esc(c.domains?.slice(1).join(' · ')||'Certbot managed certificate')}</p><div class="hs-cert-count" style="color:${color}"><strong>${remaining===null?'—':Math.max(0,remaining)}</strong><span>${remaining!==null&&remaining<=0?'Expired':'days remaining'}</span><span class="hs-s-badge">${renewing?'Renewing':remaining===null?'Unavailable':remaining<=0?'Expired':remaining<=30?'Renew soon':'Valid'}</span></div><div class="hs-s-meter"><i style="width:${progress}%;background:${color}"></i></div><div class="hs-cert-dates"><span>Issued<strong>${c.starts_at?esc(new Date(c.starts_at*1000).toLocaleDateString()):'—'}</strong></span><span>Expires<strong>${c.expires_at?esc(new Date(c.expires_at*1000).toLocaleDateString()):'—'}</strong></span></div>${c.error?`<p role="alert">${esc(c.error)}</p>`:''}<button data-renew="${index}" ${!c.online||!c.renewable||renewing?'disabled':''}>${renewing?'Renewal in progress…':'↻ Renew now'}</button></article>`;
-    }).join('')||'<div class="hs-s-card"><h3>No Certbot certificates reported</h3><p>Install or connect the HS agent on the certificate server. It reads Certbot lineages from /etc/letsencrypt/live and their renewal configuration.</p></div>'}</div><details style="margin-top:18px"><summary>Server connections</summary>${data.targets.map(t=>`<div class="hs-s-head"><span>${esc(t.name)} · ${t.online?'Online':'Offline'}${t.capabilities?.certbot?' · Certbot ready':' · Certbot not reported'}</span>${t.id!=='panel'?`<button data-enroll="${esc(t.id)}">Connect agent</button>`:''}</div>`).join('')}<div data-token class="hs-s-status"></div></details>${jobs({...data,jobs:data.jobs.filter(j=>j.action==='renew')})}`;
+    }).join('')||'<div class="hs-s-card"><h3>No Certbot certificates reported</h3><p>Install or connect the HS agent on the certificate server. It reads Certbot lineages from /etc/letsencrypt/live and their renewal configuration.</p></div>'}</div><details style="margin-top:18px"><summary>Server connections</summary>${data.targets.map(t=>`<div class="hs-s-head"><span>${esc(t.name)} · ${t.online?'Online':'Offline'}${t.capabilities?.certbot?' · Certbot ready':' · Certbot not reported'}</span>${t.id!=='panel'?`<span class="hs-s-badge">${t.enrolled?'Bridge enrolled':'Use Node Bridge tab'}</span>`:''}</div>`).join('')}</details>${jobs({...data,jobs:data.jobs.filter(j=>j.action==='renew')})}`;
     body.querySelectorAll('[data-renew]').forEach(b=>b.onclick=()=>{const c=cards[Number(b.dataset.renew)];action(b,()=>request(`/api/hs-services/targets/${encodeURIComponent(c.target)}/renew`,{certificate_id:c.id}));});
-    body.querySelectorAll('[data-enroll]').forEach(b=>b.onclick=async()=>{const r=await action(b,()=>request(`/api/hs-services/agents/${b.dataset.enroll}/enroll`,{}));if(r){body.querySelector('[data-token]').textContent=`Target ${r.target}\nToken (shown once): ${r.token}\nStore this in /etc/hs-pg/agent-token on the node with mode 600.`;clearInterval(timer);}});
   }
   async function outbounds(body,nativeCore){
     const data=await request('/api/cores');const cores=(data.cores||[]).filter(c=>!nativeCore||Number(c.id)===nativeCore);
@@ -186,7 +225,7 @@
   function maintain(){
     nativeTools().catch(()=>{});
     const nav=document.getElementById('hs-plugin-submenu');if(nav&&!nav.querySelector('[data-hs-service-nav]')){
-      for(const section of ['certificates']){const li=document.createElement('li');const b=document.createElement('button');const reference=nav.querySelector('button');b.type='button';b.className=reference?.className||'';b.dataset.sidebar='menu-sub-button';b.dataset.hsServiceNav=section;b.textContent=sections[section];b.onclick=()=>route(section);li.appendChild(b);nav.appendChild(li);}
+      for(const section of ['nodes','certificates']){const li=document.createElement('li');const b=document.createElement('button');const reference=nav.querySelector('button');b.type='button';b.className=reference?.className||'';b.dataset.sidebar='menu-sub-button';b.dataset.hsServiceNav=section;b.textContent=sections[section];b.onclick=()=>route(section);li.appendChild(b);nav.appendChild(li);}
     }
     if(active&&!document.getElementById('hs-services-root')?.isConnected)close();
   }
