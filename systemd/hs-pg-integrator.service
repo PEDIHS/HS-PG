@@ -1,19 +1,15 @@
 [Unit]
-Description=Low-overhead HS/Zomorod integration reconciliation for PasarGuard
+Description=Restore HS Plugin integration after PasarGuard updates
 After=docker.service network-online.target
 Wants=network-online.target
-
 [Service]
 Type=oneshot
+ExecStart=/bin/bash /opt/hs-pg/plugin/integrate-dashboard.sh
+ExecStart=/bin/bash /opt/hs-pg/plugin/integrate-services.sh
+ExecStart=/bin/bash -c 'if [ -x /opt/zomorod/plugin/integrate-dashboard.sh ]; then /opt/zomorod/plugin/integrate-dashboard.sh; fi'
+TimeoutStartSec=180
+Nice=10
 User=root
 Group=root
-UMask=0077
-ExecStart=/bin/bash -lc 'set -Eeuo pipefail; cfg=/var/lib/pasarguard/hs-plugin/shield/config.json; enabled=$(python3 -c "import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text()) if p.exists() else {}; print(1 if d.get(\"integration_guard_enabled\", True) else 0)" "$cfg" 2>/dev/null || echo 1); if [ "$enabled" != 1 ]; then echo "[HS Guard] disabled from panel"; exit 0; fi; if command -v flock >/dev/null 2>&1; then exec 9>/run/hs-pg-integrator.lock; flock -n 9 || exit 0; fi; for script in /opt/hs-pg/plugin/integrate-dashboard.sh /opt/hs-pg/plugin/integrate-extensions.sh /opt/hs-pg/plugin/integrate-shield.sh /opt/zomorod/plugin/integrate-dashboard.sh; do if [ -x "$script" ]; then "$script" || true; fi; done'
-Nice=10
-CPUWeight=10
-IOSchedulingClass=idle
-StandardOutput=journal
-StandardError=journal
-
 [Install]
 WantedBy=multi-user.target

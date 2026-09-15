@@ -1,9 +1,0 @@
-[Unit]
-Description=Deprecated HS Shield integration loop (handled by hs-pg-integrator)
-
-[Service]
-Type=oneshot
-ExecStart=/bin/true
-
-[Install]
-WantedBy=multi-user.target

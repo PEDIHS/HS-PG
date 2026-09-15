@@ -1,0 +1,64 @@
+from pathlib import Path
+from types import SimpleNamespace as Obj
+import time
+import pytest
+import hs_services as store
+import hs_fair_runtime as fair
+from retire_legacy import clean_source, clean_html
+from patch_services_api import patch_router
+
+@pytest.fixture
+def runtime(tmp_path,monkeypatch):
+    monkeypatch.setattr(store,'DATA',tmp_path)
+    monkeypatch.setattr(fair,'enabled',lambda:True)
+    p={'threshold_bytes':100_000_000_000,'speed_percent':20.,'baseline_mbps':100.,'fair_limited':True,'usage_basis':'current_cycle'}
+    store.write('fair-use.json',{'1':p})
+    store.write('fair-runtime.json',{'7':{'revision':'a'*64,'users':{'1':['1'],'2':['1']},'reached':{'1':['1']},'policies':{'1':p}}})
+    store.write('reports.json',{'7':{'updated_at':time.time(),'fair_use':{'adapter':'hs-rate-v1','updated_at':time.time(),'revision':'a'*64}}})
+    return p
+
+def test_no_shared_user_counter_and_ack_gate(runtime):
+    one=Obj(id=1,status='active',used_traffic=100_000_000_000)
+    two=Obj(id=2,status='active',used_traffic=5_000_000_000)
+    assert fair.user_state(one)['status']=='fair_limited'
+    assert fair.user_state(two) is None
+    two.used_traffic=100_000_000_000
+    assert fair.user_state(two)['pending'] # Consumption crossed, core has not applied yet.
+    store.write('reports.json',{})
+    assert fair.user_state(one)['pending']
+
+@pytest.mark.parametrize('status',['limited','expired','disabled','on_hold'])
+def test_native_precedence(runtime,status):
+    assert fair.user_state(Obj(id=1,status=status,used_traffic=200_000_000_000)) is None
+
+def test_host_identity_filter_and_reset(runtime):
+    hosts={1:Obj(inbound_tag='a',status=[]),2:Obj(inbound_tag='a',status=[]),3:Obj(inbound_tag='b',status=[])}
+    user=Obj(id=1,status='active',used_traffic=100_000_000_000,inbounds=['a','b'])
+    assert fair.filter_hosts(hosts,user)==[hosts[1]]
+    user.used_traffic=0
+    assert fair.filter_hosts(hosts,user)==list(hosts.values())
+    assert fair.limited_groups()=={100_000_000_000:{1}}
+
+def test_changed_policy_waits_for_core(runtime):
+    runtime['speed_percent']=10
+    store.write('fair-use.json',{'1':runtime})
+    assert fair.user_state(Obj(id=1,status='active',used_traffic=100_000_000_000))['pending']
+    assert fair.limited_groups()=={}
+
+def test_retirement_preserves_native_and_new_service_routes():
+    native='from fastapi import APIRouter\napi_router = APIRouter()\nrouters = []\n'
+    old=native+'# hs-shield-router-start\nfrom app import hs_shield_api\n# hs-shield-router-end\n'
+    clean=clean_source(old)
+    assert 'hs_shield_api' not in clean and 'api_router' in clean
+    patched=patch_router(clean)
+    assert patch_router(patched)==patched
+    assert clean_source(patched)==patched
+    assert clean_html('<body><script src="/app.js"></script><script id="hs-shield-loader" src="/statics/hs-shield.js"></script></body>')=='<body><script src="/app.js"></script></body>'
+
+def test_legacy_rate_routes_only_are_removed():
+    bad={'tag':'hs-fair-1-0123456789','protocol':'freedom','settings':{},'streamSettings':{'sockopt':{'mark':0x48000001}}}
+    user={'tag':'hs-fair-custom','protocol':'socks','settings':{}}
+    config={'outbounds':[bad,user,{'tag':'warp','protocol':'wireguard'}],'routing':{'rules':[{'outboundTag':bad['tag']},{'outboundTag':'warp'}]}}
+    fixed=fair.strip_legacy_routes(config)
+    assert len(fixed['outbounds'])==2 and fixed['routing']['rules']==[{'outboundTag':'warp'}]
+    assert config['outbounds'][0]==bad

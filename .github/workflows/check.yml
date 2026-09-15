@@ -29,8 +29,47 @@ jobs:
           cd tests
           npx playwright install --with-deps chromium
           npm run test:browser
-      - name: nftables syntax in isolated network namespace
+      - name: Firewall removal migration
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y nftables
-          sudo python tests/nft_preflight.py
+          sudo python tests/nft_retirement.py
+  native-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: PasarGuard/panel
+          ref: aebf7256927710329d380d67ce96224f287ae5f6
+          path: panel-source
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Native patch compile and idempotence
+        run: python tests/native_patch_check.py panel-source/app
+  fair-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: XTLS/Xray-core
+          ref: 52a412d9e2f5c2a5142b1b4e2ab3771dacb8b120
+          path: xray-source
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: xray-source/go.mod
+          cache-dependency-path: xray-source/go.sum
+      - name: Build and verify aggregate per-user pacing
+        run: |
+          python3 plugin/patch_fair_core.py xray-source core/hsfair
+          cd xray-source
+          go test -race ./common/hsfair
+          go build -trimpath -o ../xray-hs-fair ./main
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xray-hs-fair-linux-amd64
+          path: |
+            xray-hs-fair
+            xray-source/LICENSE

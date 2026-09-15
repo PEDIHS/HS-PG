@@ -2,6 +2,7 @@
 """HS host/node worker. Executes fixed certificate/MTProxy actions, never arbitrary shell."""
 
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import argparse
 import json
 import os
@@ -39,12 +40,12 @@ def local_config():
 
 def cert_inventory():
     result = []
+    # Certbot lineages only: node trust and arbitrary PEM files are not ACME certificates.
+    certbot_root = Path(local_config().get("certbot_config_dir", "/etc/letsencrypt"))
     sources = [
         (p.parent.name, p, "certbot")
-        for p in Path("/etc/letsencrypt/live").glob("*/fullchain.pem")
+        for p in certbot_root.glob("live/*/fullchain.pem")
     ]
-    for item in local_config().get("certificates", []):
-        sources.append((item["id"], Path(item["path"]), item.get("provider", "manual")))
     for identity, path, provider in sources:
         try:
             decoded = ssl._ssl._test_decode_cert(str(path))
@@ -58,7 +59,7 @@ def cert_inventory():
                     expires_at=expires,
                     starts_at=starts,
                     provider=provider,
-                    renewable=provider == "certbot" and bool(shutil.which("certbot")),
+                    renewable=bool(shutil.which("certbot")) and (certbot_root / "renewal" / (identity + ".conf")).is_file(),
                     issuer=str(decoded.get("issuer", "")),
                     path=str(path),
                 )
@@ -92,15 +93,42 @@ def proxies():
     return result
 
 
+def fair_ack():
+    try:
+        path=Path(local_config().get('fair_policy_file',str(STATE/'fair-policy.json')))
+        ack=json.loads(Path(str(path)+'.ack').read_text())
+        if time.time()-ack.get('updated_at',0)<25 and ack.get('adapter')=='hs-rate-v1':return ack
+    except (OSError,ValueError,TypeError):pass
+    return {}
+
+
+def apply_fair_manifest(value):
+    if value is None:return
+    if not isinstance(value,dict) or not re.fullmatch('[a-f0-9]{64}',value.get('revision','')):raise ValueError('Invalid fair manifest')
+    rates=value.get('rates')
+    if not isinstance(rates,dict) or len(rates)>100000:raise ValueError('Invalid fair rates')
+    for key,rate in rates.items():
+        if not isinstance(key,str) or '\0' not in key or len(key)>512 or type(rate)!=int or not 1<=rate<=12500000000:raise ValueError('Invalid fair entry')
+    path=Path(local_config().get('fair_policy_file',str(STATE/'fair-policy.json')))
+    path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+    data=json.dumps(value,sort_keys=True)
+    if path.is_file() and path.read_text()==data:return
+    tmp=path.with_suffix('.tmp')
+    with tmp.open('w') as stream:
+        os.chmod(tmp,0o600);stream.write(data);stream.flush();os.fsync(stream.fileno())
+    os.replace(tmp,path)
+
+
 def inventory():
     return dict(
         updated_at=time.time(),
         certificates=cert_inventory(),
+        fair_use=fair_ack(),
         proxies=proxies(),
         capabilities=dict(
             certbot=bool(shutil.which("certbot")),
             mtproxy=Path(MT_BINARY).is_file(),
-            fair_rate_limit=False,
+            fair_rate_limit=bool(fair_ack()),
         ),
     )
 
@@ -122,6 +150,8 @@ def renew(identity):
             identity,
             "--force-renewal",
             "--non-interactive",
+            "--config-dir",
+            str(Path(local_config().get("certbot_config_dir", "/etc/letsencrypt"))),
         ],
         timeout=600,
     )
@@ -298,7 +328,9 @@ def main():
                 completion_file.unlink()
             report = inventory()
             if args.panel:
-                job = remote("poll", report).get("job")
+                response=remote("poll", report)
+                apply_fair_manifest(response.get("fair_policy"))
+                job=response.get("job")
             else:
                 with store.lock():
                     reports = store.read("reports.json")
@@ -309,7 +341,23 @@ def main():
                 result = {}
                 error = None
                 try:
-                    result = execute(job)
+                    # Keep traffic policy synchronization alive during slow ACME jobs.
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        future=pool.submit(execute,job)
+                        while True:
+                            try:
+                                result=future.result(timeout=10)
+                                break
+                            except FutureTimeout:
+                                if future.done():raise
+                                try:
+                                    heartbeat=inventory();heartbeat['job_running']=True
+                                    if args.panel:apply_fair_manifest(remote('poll',heartbeat).get('fair_policy'))
+                                    else:
+                                        with store.lock():
+                                            reports=store.read('reports.json');reports['panel']=heartbeat;store.write('reports.json',reports)
+                                except Exception as exc:
+                                    print('HS heartbeat:',type(exc).__name__,flush=True)
                 except Exception as exc:
                     error = str(exc)
                 body = dict(

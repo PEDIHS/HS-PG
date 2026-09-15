@@ -9,7 +9,7 @@ from pydantic import BaseModel
 import hs_services as store
 import hs_outbounds
 import hs_fair_use
-import hs_firewall
+import hs_fair_runtime
 
 
 @pytest.fixture
@@ -33,10 +33,13 @@ def api(tmp_path, monkeypatch):
         ("hs_services", store),
         ("hs_outbounds", hs_outbounds),
         ("hs_fair_use", hs_fair_use),
-        ("hs_firewall", hs_firewall),
+        ("hs_fair_runtime", hs_fair_runtime),
     ]:
         monkeypatch.setitem(sys.modules, "app." + name, value)
         setattr(appmod, name, value)
+
+    async def empty_manifest(db,target):return {'revision':'a'*64,'rates':{}}
+    monkeypatch.setattr(hs_fair_runtime,'manifest',empty_manifest)
 
     class Admin(BaseModel):
         username: str = "owner"
@@ -131,7 +134,7 @@ def test_renewal_deduplicates_and_hides_payload(api):
         {
             "panel": dict(
                 updated_at=time.time(),
-                certificates=[dict(id="example.com", renewable=True)],
+                certificates=[dict(id="example.com", provider="certbot", renewable=True)],
             )
         },
     )
