@@ -48,7 +48,12 @@ async def inventory(
     for target in targets:
         report = reports.get(target["id"], {})
         target.update(report)
-        target["online"] = time.time() - report.get("updated_at", 0) < 60
+        online = time.time() - report.get("updated_at", 0) < 60
+        local = online and bool(report.get("bridge", {}).get("local") or report.get("capabilities", {}).get("local_node"))
+        if local:
+            target["local"] = True
+            target["enrolled"] = True
+        target["online"] = online
     return dict(
         targets=targets,
         node_trust=[],
@@ -75,6 +80,10 @@ async def bootstrap(
 ):
     if not target.isdigit() or not await db.get(Node, int(target)):
         raise HTTPException(404, "Node not found")
+    report = store.read("reports.json").get(target, {})
+    local = time.time() - report.get("updated_at", 0) < 60 and (report.get("bridge", {}).get("local") or report.get("capabilities", {}).get("local_node"))
+    if local:
+        raise HTTPException(409, "Local Node is managed directly by the panel HS Plugin and needs no Bridge install")
     return dict(target=target, bootstrap_token=store.issue_bootstrap(target), expires_in=store.BOOTSTRAP_TTL)
 
 

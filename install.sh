@@ -45,10 +45,12 @@ files=(
   plugin/patch_services_api.py
   plugin/integrate-services.sh
   plugin/install-node-agent.sh
+  plugin/install-node-bridge.sh
   plugin/install-mtproxy.sh
   backend/hs_services.py
   backend/hs_services_api.py
   backend/hs_services_agent.py
+  backend/hs_local_bridge.py
   backend/hs_outbounds.py
   backend/hs_fair_runtime.py
   backend/hs_fair_use.py
@@ -93,6 +95,7 @@ python3 -m py_compile \
   "$TMP/backend/hs_services.py" \
   "$TMP/backend/hs_services_api.py" \
   "$TMP/backend/hs_services_agent.py" \
+  "$TMP/backend/hs_local_bridge.py" \
   "$TMP/backend/hs_outbounds.py" \
   "$TMP/backend/hs_fair_use.py" \
   "$TMP/backend/hs_fair_runtime.py" \
@@ -131,10 +134,12 @@ for file in build-fair-core.sh patch_fair_core.py retire-firewall.sh retire_lega
   install -m 0755 "$TMP/plugin/$file" "$ROOT/plugin/$file"
 done
 install -m 0755 "$TMP/plugin/install-node-agent.sh" "$ROOT/plugin/install-node-agent.sh"
+install -m 0755 "$TMP/plugin/install-node-bridge.sh" "$ROOT/plugin/install-node-bridge.sh"
 install -m 0755 "$TMP/plugin/install-mtproxy.sh" "$ROOT/plugin/install-mtproxy.sh"
 install -m 0644 "$TMP/backend/hs_services.py" "$ROOT/backend/hs_services.py"
 install -m 0644 "$TMP/backend/hs_services_api.py" "$ROOT/backend/hs_services_api.py"
 install -m 0644 "$TMP/backend/hs_services_agent.py" "$ROOT/backend/hs_services_agent.py"
+install -m 0644 "$TMP/backend/hs_local_bridge.py" "$ROOT/backend/hs_local_bridge.py"
 install -m 0644 "$TMP/backend/hs_outbounds.py" "$ROOT/backend/hs_outbounds.py"
 install -m 0644 "$TMP/backend/hs_fair_runtime.py" "$ROOT/backend/hs_fair_runtime.py"
 install -m 0644 "$TMP/backend/hs_fair_use.py" "$ROOT/backend/hs_fair_use.py"

@@ -42,7 +42,9 @@ MTProxy مانند قرارگیری MTProto در ثنایی در بخش Inbounds
 {"certbot_config_dir":"/etc/letsencrypt","reload_units":{"example.com":"nginx.service"}}
 ```
 
-برای اتصال نود از **HS Plugin → Node Bridge** استفاده کنید. پنل یک bootstrap یک‌بارمصرف با عمر کوتاه می‌دهد و دستور نصب را می‌سازد. نود موجود با Node ID ثبت می‌شود و نود تازه در حالت `auto` اطلاعات لازم PasarGuard Node را محلی می‌خواند و بدون نمایش API key در UI آن را مستقیم از نود به پنل می‌فرستد.
+برای Nodeهایی که روی **همان سرور پنل** اجرا می‌شوند نصب Bridge جدا لازم نیست. HS Plugin آن‌ها را با تطبیق IP محلی و جفت `SERVICE_PORT/API_PORT` با containerهای PasarGuard Node شناسایی می‌کند و از Local Auto Bridge خود پنل برای inventory، jobها و Fair Use استفاده می‌کند. اگر چند Node روی سرور اصلی باشند، هر Node با ID و policy مستقل خودش مدیریت می‌شود. Local status فقط با heartbeat تازه معتبر است؛ اگر Node به سرور دیگری منتقل شود، بعد از منقضی شدن heartbeat دوباره به‌عنوان Remote قابل enroll است.
+
+برای **Remote Node** از **HS Plugin → Node Bridge** استفاده کنید. پنل یک bootstrap یک‌بارمصرف با عمر کوتاه می‌دهد و یک دستور one-line می‌سازد. نود موجود با Node ID ثبت می‌شود و نود تازه در حالت `auto` اطلاعات لازم PasarGuard Node را محلی می‌خواند و بدون نمایش API key در UI آن را مستقیم از نود به پنل می‌فرستد. Bridge یک shell عمومی مثل SSH در اختیار پنل نمی‌گذارد؛ فقط actionهای مشخص HS را اجرا می‌کند.
 
 bootstrap بعد از مصرف قابل استفادهٔ مجدد نیست و در state فقط hash آن نگهداری می‌شود. توکن بلندمدت Bridge با دسترسی `0600` روی نود ذخیره می‌شود و ارتباط مدیریتی HS به‌صورت outbound HTTPS از نود به پنل است. کلید خصوصی گواهی به پنل ارسال نمی‌شود؛ فقط certificate عمومی برای inventory و ثبت Node استفاده می‌شود. هنگام نصب Bridge، قوانین Fair Use قدیمی مبتنی بر حذف بسته نیز پاک می‌شوند.
 

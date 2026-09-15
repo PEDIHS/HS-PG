@@ -8,7 +8,7 @@
 
 فایروال HS حذف شده است؛ آپدیت سرویس‌ها و قوانین اختصاصی نسخهٔ قبلی را پاک می‌کند. مدیریت Certbot، ابزار WARP داخل Outbounds، پروکسی تلگرام داخل Inbounds و Fair Use داخل فرم‌های native Host و Group قرار دارد و Save جدا ندارد؛ همراه Save اصلی PasarGuard ذخیره می‌شود. Hostهای دارای inbound مشترک یک policy مشترک دارند و Group می‌تواند Always یا After usage باشد. کلیدهای قابلیت‌ها ظاهر یکسان دارند.
 
-**کاهش سرعت Fair Use نیازمند HS Node Bridge و هستهٔ Xray مجهز به adapter HS است.** تا تأیید اجرای سیاست توسط هسته، وضعیت کاربر به‌عنوان Fair limited نمایش داده نمی‌شود. [راهنمای نصب، پاک‌سازی و محدودیت‌ها](docs/hs-services.md) را ببینید.
+**کاهش سرعت Fair Use روی Remote Node نیازمند HS Node Bridge و روی همهٔ Nodeها نیازمند هستهٔ Xray مجهز به adapter HS است؛ Local Nodeهای روی سرور پنل با Local Auto Bridge مدیریت می‌شوند.** تا تأیید اجرای سیاست توسط هسته، وضعیت کاربر به‌عنوان Fair limited نمایش داده نمی‌شود. [راهنمای نصب، پاک‌سازی و محدودیت‌ها](docs/hs-services.md) را ببینید.
 
 ## قابلیت اول: Host Usage Ratio
 

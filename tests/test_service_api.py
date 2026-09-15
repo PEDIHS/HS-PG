@@ -208,3 +208,25 @@ def test_node_self_registration_is_one_time_and_hides_secrets(api, monkeypatch):
     assert payload["api_key"] not in registered.text and payload["server_ca"] not in registered.text
     replay = api.post("/api/hs-services/node-register", json=payload)
     assert replay.status_code == 401
+
+
+def test_local_node_needs_no_bridge_bootstrap(api):
+    import time
+    store.write('reports.json', {'7': {
+        'updated_at': time.time(),
+        'bridge': {'local': True, 'transport': 'local-host'},
+        'capabilities': {'local_node': True, 'bridge': True},
+    }})
+    response=api.post('/api/hs-services/agents/7/bootstrap',headers={'Authorization':'Bearer owner'})
+    assert response.status_code==409
+    assert 'needs no Bridge install' in response.text
+
+
+def test_stale_local_report_can_be_reenrolled(api):
+    store.write('reports.json', {'7': {
+        'updated_at': 0,
+        'bridge': {'local': True, 'transport': 'local-host'},
+        'capabilities': {'local_node': True, 'bridge': True},
+    }})
+    response=api.post('/api/hs-services/agents/7/bootstrap',headers={'Authorization':'Bearer owner'})
+    assert response.status_code==200
