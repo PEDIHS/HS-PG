@@ -27,6 +27,19 @@ def test_no_shared_user_counter_and_ack_gate(runtime):
     store.write('reports.json',{})
     assert fair.user_state(one)['pending']
 
+
+def test_replicated_core_waits_for_every_node_ack(runtime):
+    state=store.read('fair-runtime.json')
+    state['8']={'revision':'a'*64,'users':{'1':['1']},'reached':{'1':['1']},'policies':{'1':runtime}}
+    store.write('fair-runtime.json',state)
+    user=Obj(id=1,status='active',used_traffic=100_000_000_000)
+    # Target 7 is acknowledged by the fixture, target 8 is not yet ready.
+    assert fair.user_state(user)['pending']
+    reports=store.read('reports.json')
+    reports['8']={'updated_at':time.time(),'fair_use':{'adapter':'hs-rate-v1','updated_at':time.time(),'revision':'a'*64}}
+    store.write('reports.json',reports)
+    assert fair.user_state(user)['status']=='fair_limited'
+
 @pytest.mark.parametrize('status',['limited','expired','disabled','on_hold'])
 def test_native_precedence(runtime,status):
     assert fair.user_state(Obj(id=1,status=status,used_traffic=200_000_000_000)) is None
