@@ -35,16 +35,16 @@ func (m *Manager) Load(data []byte) error {
  for key:=range m.buckets {if m.rates[key]!=v.Rates[key]{delete(m.buckets,key)}}
  m.rates=v.Rates;m.revision=v.Revision
  close(m.changed);m.changed=make(chan struct{})
- // Preserve pacing debt across a lower rate or refresh: opening more sessions cannot reset it.
+ // Preserve pacing debt on an unchanged policy; opening sessions cannot reset it.
  for key,b:=range m.buckets {if _,ok:=m.rates[key];!ok||time.Since(b.touched)>time.Minute {delete(m.buckets,key)}}
  return nil
 }
 // Wait is shared across upload, download and simultaneous sessions. At most one
-// 2 KiB quantum is scheduled per caller; cancellation does not create free tokens.
+// 64 KiB quantum is scheduled per caller; cancellation does not create free tokens.
 func (m *Manager) Wait(ctx context.Context,key string,n int) error {
  for n>0 {
   select {case <-ctx.Done():return ctx.Err();default:}
-  q:=n;if q>2048{q=2048}
+  q:=n;if q>65536{q=65536}
   m.mu.Lock();rate:=m.rates[key]
   if rate==0 {m.mu.Unlock();return nil}
   quantum:=int(rate/20);if quantum<1{quantum=1};if q>quantum{q=quantum}

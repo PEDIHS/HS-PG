@@ -83,6 +83,11 @@ def patch_native(app):
         text=text.replace(marker+'\n    @property',marker+'\n    @__import__("pydantic").computed_field\n    @property',1)
     anchor='class UserListQuery(BaseModel):'
     if '    hs_fair_limited: bool = False' not in text:text=text.replace(anchor,anchor+'\n    hs_fair_limited: bool = False',1)
+    metadata='    # HS feature metadata for native user-list viewers.'
+    if metadata not in text:
+        users_anchor='class UsersResponse(BaseModel):'
+        if text.count(users_anchor)!=1:raise RuntimeError('Native users response changed')
+        text=text.replace(users_anchor,users_anchor+'\n'+metadata+'\n    @__import__("pydantic").computed_field\n    @property\n    def hs_fair_use_enabled(self) -> bool:\n        from app.hs_fair_runtime import enabled\n        return enabled()\n',1)
     generated[path]=text
     path=app/'db/crud/user.py';text=path.read_text()
     marker='    # HS Fair limited filter; evaluated before native pagination.'

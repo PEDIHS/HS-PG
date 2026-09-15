@@ -318,6 +318,8 @@ async def save_fair(
         .scalars()
         .all()
     )
+    if len(siblings) != 1:
+        raise HTTPException(409, 'This Host needs its own inbound for independent Fair Use. Another Host currently shares this inbound.')
     core_rows=(await db.execute(select(CoreConfig))).scalars().all()
     matching=[c for c in core_rows if any(i.get('tag')==host.inbound_tag and i.get('protocol') in {'vless','vmess','trojan','shadowsocks','socks','http'} for i in c.config.get('inbounds',[]))]
     if len(matching)!=1:raise HTTPException(409,'Fair Use requires a unique supported Xray inbound.')

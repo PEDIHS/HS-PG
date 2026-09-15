@@ -65,7 +65,7 @@ sudo /opt/hs-pg/plugin/build-fair-core.sh /path/to/Xray-core /opt/hs-pg/xray-hs-
 
 Agent هر ده ثانیه سیاست را هماهنگ می‌کند و هسته هر ثانیه آن را می‌خواند. Agent طی تمدید طولانی Certbot نیز این هماهنگی را ادامه می‌دهد. آستانه با تأخیر آمارگیری خود پاسارگارد و این همگام‌سازی اعمال می‌شود. نشان Fair limited فقط وقتی فعال می‌شود که هستهٔ نود revision درست را تأیید کرده باشد. بدون ACK، ذخیرهٔ سیاست به‌عنوان کاهش سرعت موفق نمایش داده نمی‌شود.
 
-سیاست نیازمند inbound یکتا از نوع VLESS، VMess، Trojan، Shadowsocks، SOCKS یا HTTP و یک نود مشخص برای بودجهٔ مشترک است. Hostهای دارای inbound مشترک نمی‌توانند سیاست‌های متفاوت داشته باشند؛ برای تفاوت واقعی از inbound جدا استفاده کنید. WireGuard native و هسته‌های غیر Xray مشمول این adapter نیستند. وضعیت‌های expired، limited، disabled و on_hold اولویت دارند. وضعیت دیتابیس اصلی تغییر نمی‌کند؛ `hs_status` وضعیت مشتق‌شده را در API برمی‌گرداند و فیلتر سرور قبل از pagination اعمال می‌شود.
+سیاست نیازمند inbound یکتا از نوع VLESS، VMess، Trojan، Shadowsocks، SOCKS یا HTTP و یک نود مشخص برای بودجهٔ مشترک است. هر Host باید inbound اختصاصی داشته باشد؛ اگر Host دیگری با آن inbound ساخته شود، محدودیت آن غیرفعال می‌شود تا Host دیگر ناخواسته محدود نشود. WireGuard native و هسته‌های غیر Xray مشمول این adapter نیستند. وضعیت‌های expired، limited، disabled و on_hold اولویت دارند. وضعیت دیتابیس اصلی تغییر نمی‌کند؛ `hs_status` وضعیت مشتق‌شده را در API برمی‌گرداند و فیلتر سرور قبل از pagination اعمال می‌شود.
 
 ## اعتبارسنجی
 

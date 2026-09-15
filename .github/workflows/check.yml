@@ -67,6 +67,8 @@ jobs:
           cd xray-source
           go test -race ./common/hsfair
           go build -trimpath -o ../xray-hs-fair ./main
+          cd ..
+          python3 tests/fair_core_network.py ./xray-hs-fair
       - uses: actions/upload-artifact@v4
         with:
           name: xray-hs-fair-linux-amd64

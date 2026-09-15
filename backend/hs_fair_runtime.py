@@ -21,9 +21,15 @@ def snapshot(name):
 
 def enabled():
     try:
-        from app.routers.hs_plugin_api import _load_state
-        return bool(_load_state().get('features',{}).get('fair_use',{}).get('enabled'))
+        from app.routers.hs_plugin_api import STATE_FILE
+        stamp = STATE_FILE.stat().st_mtime_ns
+        key = str(STATE_FILE)
+        if _cache.get(key, (None,))[0] != stamp:
+            _cache[key] = (stamp, json.loads(STATE_FILE.read_text()))
+        return bool(_cache[key][1].get('features',{}).get('fair_use',{}).get('enabled'))
     except ImportError:
+        return False
+    except (OSError, ValueError):
         return False
 
 
@@ -69,9 +75,16 @@ async def manifest(db,target):
     core=await db.get(CoreConfig,node.core_config_id)
     if core is None:return None
     tags={i['tag'] for i in core.config.get('inbounds',[]) if i.get('tag') and i.get('protocol') in {'vless','vmess','trojan','shadowsocks','socks','http'}}
-    hosts=(await db.execute(select(ProxyHost).where(ProxyHost.inbound_tag.in_(tags),ProxyHost.is_disabled.is_(False)))).scalars().all()
+    cores=(await db.execute(select(CoreConfig))).scalars().all()
+    tags={tag for tag in tags if sum(any(i.get('tag')==tag for i in c.config.get('inbounds',[])) for c in cores)==1}
+    hosts=(await db.execute(select(ProxyHost).where(ProxyHost.inbound_tag.in_(tags)))).scalars().all()
     policies=snapshot('fair-use.json') if enabled() else {}
-    configured={str(h.id):(h.inbound_tag,validate_policy(policies[str(h.id)])) for h in hosts if str(h.id) in policies}
+    # A connection identifies the inbound, not the subscription Host label.
+    # Never throttle another Host silently if it starts sharing that inbound.
+    counts = {}
+    for host in hosts:
+        counts[host.inbound_tag] = counts.get(host.inbound_tag, 0) + 1
+    configured={str(h.id):(h.inbound_tag,validate_policy(policies[str(h.id)])) for h in hosts if str(h.id) in policies and not h.is_disabled and counts[h.inbound_tag] == 1}
     # Guard against a core being assigned to more nodes after a policy was saved.
     peers=(await db.execute(select(Node.id).where(Node.core_config_id==node.core_config_id))).scalars().all()
     if len(peers)!=1:configured={}

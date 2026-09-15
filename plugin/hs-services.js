@@ -150,7 +150,8 @@
   }
   let nativeKey='',nativeBusy=false,nativeState=null;
   function nativeContext(){
-    const match=location.pathname.match(/\/nodes\/cores\/(\d+)\/?$/);if(!match)return null;
+    const route=location.hash.startsWith('#/')?location.hash.slice(1).split('?')[0]:location.pathname;
+    const match=route.match(/\/nodes\/cores\/(\d+)\/?$/);if(!match)return null;
     const tabs=[...document.querySelectorAll('[role=tablist]')].find(t=>t.querySelector('.lucide-arrow-up-from-line'));
     const selected=tabs?.querySelector('[role=tab][aria-selected=true]');
     const section=selected?.querySelector('.lucide-arrow-up-from-line')?'outbounds':selected?.querySelector('.lucide-arrow-down-to-line')?'inbounds':null;
