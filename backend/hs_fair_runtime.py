@@ -88,11 +88,24 @@ def user_state(user):
     }
 
 
+def _status_value(value):
+    return str(getattr(value,'value',value))
+
+
+def _host_status_matches(host_id,host,effective_status):
+    native={_status_value(value) for value in (getattr(host,'status',None) or [])}
+    if snapshot('fair-host-status.json').get(str(host_id)) is True:
+        native.add('fair_limited')
+    return not native or effective_status in native
+
+
 def filter_hosts(hosts,user):
     state=user_state(user)
-    if not state or state['pending']:return [h for h in hosts.values() if not h.status or user.status in h.status]
+    if not state or state['pending']:
+        native_status=_status_value(getattr(user,'status','active'))
+        return [host for host_id,host in hosts.items() if _host_status_matches(host_id,host,native_status)]
     tags=set(state.get('inbound_tags',[]))
-    return [host for host in hosts.values() if host.inbound_tag in tags and (not host.status or user.status in host.status)]
+    return [host for host_id,host in hosts.items() if host.inbound_tag in tags and _host_status_matches(host_id,host,'fair_limited')]
 
 
 async def manifest(db,target):

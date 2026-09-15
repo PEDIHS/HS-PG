@@ -425,6 +425,10 @@ class GroupFairBody(BaseModel):
     baseline_mbps: float = Field(gt=0, le=100000, allow_inf_nan=False)
 
 
+class HostFairStatusBody(BaseModel):
+    enabled: bool
+
+
 async def _expanded_host_fair(db):
     from app.db.models import ProxyHost
     from app.hs_fair_use import validate_policy
@@ -467,14 +471,17 @@ async def fair_settings(
     db: AsyncSession = Depends(get_db),
     owner: AdminDetails = Depends(_require_owner),
 ):
-    from app.db.models import Group
+    from app.db.models import Group, ProxyHost
     reports=store.read('reports.json')
     policies,shared=await _expanded_host_fair(db)
     group_rows=(await db.execute(select(Group.id,Group.name))).all()
+    host_ids={str(value) for value in (await db.execute(select(ProxyHost.id))).scalars().all()}
+    fair_status=store.read('fair-host-status.json')
     return dict(
         policies=policies,
         group_policies=store.read('fair-use-groups.json'),
         groups=[dict(id=int(identity),name=name) for identity,name in group_rows],
+        fair_status_hosts=sorted(int(identity) for identity,value in fair_status.items() if value is True and identity in host_ids),
         shared_hosts=shared,
         enforcement_available=any(
             r.get('fair_use',{}).get('adapter')=='hs-rate-v1'
@@ -483,6 +490,26 @@ async def fair_settings(
         ),
         blocker='Per-user pacing requires the HS-enabled Xray core and connected node agent.',
     )
+
+
+@router.put("/hosts/{host_id}/fair-status")
+async def save_host_fair_status(
+    host_id: int,
+    body: HostFairStatusBody,
+    db: AsyncSession = Depends(get_db),
+    owner: AdminDetails = Depends(_require_owner),
+):
+    from app.db.models import ProxyHost
+    if not await db.get(ProxyHost, host_id):
+        raise HTTPException(404, "Host not found")
+    with store.lock():
+        values=store.read('fair-host-status.json')
+        if body.enabled:
+            values[str(host_id)]=True
+        else:
+            values.pop(str(host_id),None)
+        store.write('fair-host-status.json',values)
+    return dict(host_id=host_id,fair_limited=body.enabled)
 
 
 @router.put("/hosts/{host_id}/fair-use")
