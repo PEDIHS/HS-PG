@@ -79,6 +79,9 @@ def run(binary):
         policy = root / 'fair-policy.json'
         port = free_port()
         config = {'log': {'loglevel': 'debug'}, 'inbounds': [{'listen': '127.0.0.1', 'port': port, 'tag': 'paid', 'protocol': 'vless', 'settings': {'decryption': 'none', 'clients': [{'id': str(IDS[i]), 'email': str(i)} for i in IDS]}}], 'outbounds': [{'protocol': 'freedom'}]}
+        # This Xray version blocks private destinations from VLESS by default.
+        # Allow only the local fixture's exact address/port in this test config.
+        config['outbounds'][0]['settings'] = {'finalRules': [{'action': 'allow', 'ip': ['127.0.0.1/32'], 'port': str(server.server_port), 'network': 'tcp'}]}
         config_file = root / 'config.json'
         config_file.write_text(json.dumps(config))
         log = root / 'xray.log'
