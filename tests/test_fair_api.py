@@ -109,6 +109,7 @@ def test_shared_inbound_policy_is_one_setting(fair_api):
     settings=client.get("/api/hs-services/fair-use",headers=headers).json()
     assert settings["policies"]["1"]==settings["policies"]["2"]
     assert settings["shared_hosts"]=={"1":[1,2],"2":[1,2]}
+    assert settings["fair_status_hosts"]==[]
 
     two={"threshold_bytes":150_000_000_000,"baseline_mbps":120,"speed_percent":35}
     response=client.put("/api/hs-services/hosts/2/fair-use",json=two,headers=headers)
@@ -155,3 +156,16 @@ def test_group_always_and_threshold_validation(fair_api):
     assert response.status_code==422
     response=client.delete("/api/hs-services/groups/5/fair-use",headers=headers)
     assert response.status_code==200 and store.read("fair-use-groups.json")=={}
+
+
+def test_host_fair_status_is_hs_metadata_not_native_enum(fair_api):
+    client,_=fair_api; headers={"Authorization":"Bearer owner"}
+    enabled=client.put('/api/hs-services/hosts/1/fair-status',json={'enabled':True},headers=headers)
+    assert enabled.status_code==200 and enabled.json()['fair_limited'] is True
+    assert store.read('fair-host-status.json')=={'1':True}
+    settings=client.get('/api/hs-services/fair-use',headers=headers).json()
+    assert settings['fair_status_hosts']==[1]
+    disabled=client.put('/api/hs-services/hosts/1/fair-status',json={'enabled':False},headers=headers)
+    assert disabled.status_code==200 and store.read('fair-host-status.json')=={}
+    missing=client.put('/api/hs-services/hosts/999/fair-status',json={'enabled':True},headers=headers)
+    assert missing.status_code==404

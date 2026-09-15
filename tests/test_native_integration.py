@@ -76,6 +76,21 @@ def test_always_group_policy_limits_all_group_inbounds(runtime):
     assert fair.filter_hosts(hosts,user)==[hosts[1],hosts[2]]
     assert fair.limited_groups()=={0:{1}}
 
+
+def test_fair_limited_host_status_is_distinct_from_native_active(runtime):
+    store.write('fair-host-status.json',{'1':True})
+    hosts={
+        1:Obj(inbound_tag='a',status=[]),
+        2:Obj(inbound_tag='a',status=['active']),
+        3:Obj(inbound_tag='a',status=[]),
+    }
+    fair_user=Obj(id=1,status='active',used_traffic=100_000_000_000)
+    normal_user=Obj(id=2,status='active',used_traffic=5_000_000_000)
+    assert fair.filter_hosts(hosts,fair_user)==[hosts[1],hosts[3]]
+    assert fair.filter_hosts(hosts,normal_user)==[hosts[2],hosts[3]]
+    store.write('fair-host-status.json',{'1':True,'2':True})
+    assert fair.filter_hosts(hosts,fair_user)==[hosts[1],hosts[2],hosts[3]]
+
 def test_changed_policy_waits_for_core(runtime):
     runtime['speed_percent']=10
     store.write('fair-use.json',{'1':runtime})
