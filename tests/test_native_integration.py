@@ -28,17 +28,24 @@ def test_no_shared_user_counter_and_ack_gate(runtime):
     assert fair.user_state(one)['pending']
 
 
-def test_replicated_core_waits_for_every_node_ack(runtime):
+def test_replicated_core_waits_for_missing_runtime_and_every_ack(runtime):
     state=store.read('fair-runtime.json')
-    state['8']={'revision':'a'*64,'users':{'1':['1']},'reached':{'1':['1']},'policies':{'1':runtime}}
+    state['7']['targets']=['7','8']
     store.write('fair-runtime.json',state)
     user=Obj(id=1,status='active',used_traffic=100_000_000_000)
-    # Target 7 is acknowledged by the fixture, target 8 is not yet ready.
+    # Target 8 has not even polled yet: target 7 must not make the user look enforced.
+    assert fair.user_state(user)['pending']
+    assert fair.limited_groups()=={}
+    state=store.read('fair-runtime.json')
+    state['8']={'revision':'a'*64,'targets':['7','8'],'users':{'1':['1']},'reached':{'1':['1']},'policies':{'1':runtime}}
+    store.write('fair-runtime.json',state)
+    # Target 8 has a manifest but has not acknowledged it yet.
     assert fair.user_state(user)['pending']
     reports=store.read('reports.json')
     reports['8']={'updated_at':time.time(),'fair_use':{'adapter':'hs-rate-v1','updated_at':time.time(),'revision':'a'*64}}
     store.write('reports.json',reports)
     assert fair.user_state(user)['status']=='fair_limited'
+    assert fair.limited_groups()=={100_000_000_000:{1}}
 
 @pytest.mark.parametrize('status',['limited','expired','disabled','on_hold'])
 def test_native_precedence(runtime,status):
