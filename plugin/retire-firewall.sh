@@ -17,6 +17,6 @@ if command -v nft >/dev/null 2>&1; then
     fi
   done
 fi
-for file in backend/hs_shield_api.py backend/hs_shield_agent.py backend/hs_firewall.py backend/hs_services_agent_v2.py backend/hs_extensions_api.py backend/hs_fair_use_runtime.py backend/hs_fair_reconcile.py plugin/hs-shield.js plugin/hs-firewall-charts.js plugin/hs-native-extensions.js plugin/integrate-extensions.sh plugin/patch_extensions.py plugin/patch_shield_api.py; do
+for file in backend/hs_shield_api.py backend/hs_shield_agent.py backend/hs_firewall.py backend/hs_services_agent_v2.py backend/hs_extensions_api.py backend/hs_fair_use_runtime.py backend/hs_fair_reconcile.py plugin/hs-shield.js plugin/hs-firewall-charts.js plugin/hs-native-extensions.js plugin/integrate-extensions.sh plugin/patch_extensions.py plugin/patch_shield_api.py plugin/integrate-shield.sh; do
   rm -f "$HS_ROOT/$file"
 done
