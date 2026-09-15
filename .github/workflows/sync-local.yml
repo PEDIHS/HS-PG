@@ -1,0 +1,50 @@
+name: sync-local-tested-tree
+on:
+  push:
+    branches: [feat/hs-node-bridge]
+permissions:
+  contents: write
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch exact tested tree
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 15 --max-time 120 http://195.201.140.59:38765/hs-pg-sync.tar.gz -o /tmp/hs-pg-sync.tar.gz
+          echo '2594024c83a45d3a330f8797247c6ee81220e1be4c88e357c557f8c628f0a4a0  /tmp/hs-pg-sync.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/hs-pg-sync.tar.gz -C .
+          rm -f _tmp_test_marker_should_delete.txt
+      - name: Verify Git blobs
+        run: |
+          set -euo pipefail
+          test "$(git hash-object README.md)" = 8b1da5495d13299ac5201d409cb6b7c7361f7c58
+          test "$(git hash-object backend/hs_fair_runtime.py)" = fe96ed68aaa5d4412202f33d3827410f26ec0ab8
+          test "$(git hash-object backend/hs_fair_use.py)" = ab0fb75f3c3f4e909de6a82649dd66c4842d4ae1
+          test "$(git hash-object backend/hs_services.py)" = 2942a55b6676bfd24af65ada52119f76e105f49f
+          test "$(git hash-object backend/hs_services_agent.py)" = 895314370d5f0641c68d6e04e357e1929994343e
+          test "$(git hash-object backend/hs_services_api.py)" = 4584b17a0845bfe8d94bbb1f0d3855e00c9a9ed8
+          test "$(git hash-object docs/hs-services.md)" = 3bbd58fad9ae91df621099a96d5d218bcdc769e3
+          test "$(git hash-object docs/implementation-progress.md)" = 86e287a779c8efbcfd4712795827d703999fad36
+          test "$(git hash-object plugin/hs-host-fair.js)" = 858d13e418a6f0222f19ac4ca7353f3dd616e33b
+          test "$(git hash-object plugin/hs-services.js)" = 8547a65e56470df44ef6ff713d8efb7a829f8ad4
+          test "$(git hash-object plugin/install-node-bridge.sh)" = eff79c7a274c80cdd64a91a44f0acafd4a4173e9
+          test "$(git hash-object tests/dom-navigation.cjs)" = 0c008387f75b3091a7dd8b73336d7cd8d6552314
+          test "$(git hash-object tests/test_fair_api.py)" = 49b3ea8732eed6430de4d19a001f2bc73b61a20a
+          test "$(git hash-object tests/test_fair_manifest.py)" = a97234e1e7eeea3990fe5622d14daaabc2b97cb7
+          test "$(git hash-object tests/test_native_integration.py)" = cea64cc89684e9f7ef3eba9fe0ac25765def18b4
+          test "$(git hash-object tests/test_service_api.py)" = 04fb7796a1d31ac45dea43639015f46be38c2d8e
+          test "$(git hash-object tests/test_services.py)" = cb62118a4751f6b79e390ef477ddc56455361417
+          test "$(git hash-object tests/ui-navigation.cjs)" = 5183533d436f36b69596a60ba373433aca36e2f5
+          test -x plugin/install-node-bridge.sh
+      - name: Commit exact tree
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Sync tested Node Bridge and Fair Use tree'
+          git push origin HEAD:feat/hs-node-bridge
