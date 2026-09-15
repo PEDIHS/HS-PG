@@ -76,6 +76,9 @@ async def manifest(db,target):
     if core is None:return None
     tags={i['tag'] for i in core.config.get('inbounds',[]) if i.get('tag') and i.get('protocol') in {'vless','vmess','trojan','shadowsocks','socks','http'}}
     cores=(await db.execute(select(CoreConfig))).scalars().all()
+    # A tag may be replicated by assigning the same Core to several Nodes. What is
+    # unsafe is the same tag being defined by different Core configs, where a Host
+    # identity no longer determines which policy should own the traffic.
     tags={tag for tag in tags if sum(any(i.get('tag')==tag for i in c.config.get('inbounds',[])) for c in cores)==1}
     hosts=(await db.execute(select(ProxyHost).where(ProxyHost.inbound_tag.in_(tags)))).scalars().all()
     policies=snapshot('fair-use.json') if enabled() else {}
@@ -85,9 +88,9 @@ async def manifest(db,target):
     for host in hosts:
         counts[host.inbound_tag] = counts.get(host.inbound_tag, 0) + 1
     configured={str(h.id):(h.inbound_tag,validate_policy(policies[str(h.id)])) for h in hosts if str(h.id) in policies and not h.is_disabled and counts[h.inbound_tag] == 1}
-    # Guard against a core being assigned to more nodes after a policy was saved.
-    peers=(await db.execute(select(Node.id).where(Node.core_config_id==node.core_config_id))).scalars().all()
-    if len(peers)!=1:configured={}
+    # Replicated Nodes using this exact Core receive the same Host policy. Each
+    # target stores and acknowledges its own runtime revision; user_state keeps
+    # Fair limited pending until every applicable target has acknowledged it.
     rates={};users={};reached={}
     rows=(await db.execute(select(User.id,User.used_traffic,ProxyInbound.tag).select_from(User)
         .join(users_groups_association,users_groups_association.c.user_id==User.id)
