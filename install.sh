@@ -64,7 +64,6 @@ files=(
   plugin/patch_pasarguard.py
   plugin/patch_backup_api.py
   plugin/integrate-dashboard.sh
-  plugin/integrate-shield.sh
   plugin/hs-plugin.js
   plugin/hs-tab-fix.js
   plugin/hs-node-pro.js
@@ -150,7 +149,6 @@ install -m 0755 "$TMP/backend/hs_backup_agent.py" "$ROOT/backend/hs_backup_agent
 install -m 0755 "$TMP/plugin/patch_pasarguard.py" "$ROOT/plugin/patch_pasarguard.py"
 install -m 0755 "$TMP/plugin/patch_backup_api.py" "$ROOT/plugin/patch_backup_api.py"
 install -m 0755 "$TMP/plugin/integrate-dashboard.sh" "$ROOT/plugin/integrate-dashboard.sh"
-install -m 0755 "$TMP/plugin/integrate-shield.sh" "$ROOT/plugin/integrate-shield.sh"
 install -m 0644 "$TMP/plugin/hs-plugin.js" "$ROOT/plugin/hs-plugin.js"
 install -m 0644 "$TMP/plugin/hs-tab-fix.js" "$ROOT/plugin/hs-tab-fix.js"
 install -m 0644 "$TMP/plugin/hs-node-pro.js" "$ROOT/plugin/hs-node-pro.js"
