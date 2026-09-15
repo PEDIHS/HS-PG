@@ -222,6 +222,28 @@ def test_local_node_needs_no_bridge_bootstrap(api):
     assert 'needs no Bridge install' in response.text
 
 
+def test_bridge_update_is_owner_scoped_remote_only(api):
+    import time
+    owner={"Authorization":"Bearer owner"}
+    store.write("reports.json", {"7": {
+        "updated_at": time.time(),
+        "bridge": {"version":"1.0.0", "protocol":"hs-bridge-v1", "local":False},
+        "capabilities": {"bridge":True},
+    }})
+    response=api.post("/api/hs-services/targets/7/bridge-update",headers=owner)
+    assert response.status_code==200, response.text
+    assert response.json()["action"]=="bridge-update"
+    assert response.json()["target"]=="7"
+    assert api.post("/api/hs-services/targets/7/bridge-update").status_code==403
+    store.write("reports.json", {"7": {
+        "updated_at": time.time(),
+        "bridge": {"local":True},
+        "capabilities": {"bridge":True,"local_node":True},
+    }})
+    assert api.post("/api/hs-services/targets/7/bridge-update",headers=owner).status_code==409
+    assert api.post("/api/hs-services/targets/panel/bridge-update",headers=owner).status_code==409
+
+
 def test_stale_local_report_can_be_reenrolled(api):
     store.write('reports.json', {'7': {
         'updated_at': 0,

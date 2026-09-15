@@ -234,6 +234,19 @@ async def complete(body: Completion, target: str = Depends(agent)):
         raise HTTPException(409, str(exc)) from exc
 
 
+@router.post("/targets/{target}/bridge-update")
+async def bridge_update(target: str, owner: AdminDetails = Depends(_require_owner)):
+    if target == "panel":
+        raise HTTPException(409, "The panel Bridge follows HS Plugin updates")
+    report = fresh(target)
+    local = bool(report.get("bridge", {}).get("local") or report.get("capabilities", {}).get("local_node"))
+    if local:
+        raise HTTPException(409, "Local Node Bridge follows the panel HS Plugin and needs no separate update")
+    if not report.get("capabilities", {}).get("bridge"):
+        raise HTTPException(409, "HS Node Bridge is not connected on this target")
+    return public_job(store.enqueue(target, "bridge-update", "bridge:self"))
+
+
 class Renew(BaseModel):
     certificate_id: str = Field(min_length=1, max_length=253)
 
