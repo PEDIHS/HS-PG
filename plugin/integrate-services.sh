@@ -114,7 +114,7 @@ integrate_container(){
     docker exec "$cid" python3 /tmp/hs-retire.py --app "$app"
     docker cp "$PATCHER" "$cid:/tmp/hs-services-patch.py" >/dev/null
     docker cp "$API" "$cid:/tmp/hs_services_api.py" >/dev/null
-    for support in hs_services.py hs_outbounds.py hs_fair_use.py hs_fair_runtime.py; do
+    for support in hs_services.py hs_outbounds.py hs_fair_use.py hs_fair_runtime.py hs_local_bridge.py; do
       docker cp "$HS_ROOT/backend/$support" "$cid:/tmp/$support" >/dev/null
     done
     docker exec "$cid" python3 /tmp/hs-services-patch.py --app-root "$app" --services-api /tmp/hs_services_api.py >/dev/null

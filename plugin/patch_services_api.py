@@ -120,7 +120,7 @@ def main() -> None:
         raise SystemExit(f"services API source not found: {api_source}")
 
     sources = {'hs_services_api.py': api_source}
-    for name in ('hs_services.py', 'hs_outbounds.py', 'hs_fair_use.py', 'hs_fair_runtime.py'):
+    for name in ('hs_services.py', 'hs_outbounds.py', 'hs_fair_use.py', 'hs_fair_runtime.py', 'hs_local_bridge.py'):
         source = api_source.parent / name
         if not source.is_file():
             raise SystemExit(f'Missing HS dependency: {source}')

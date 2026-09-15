@@ -113,53 +113,81 @@ def system_inventory():
     except OSError:
         load1 = 0
     disk = shutil.disk_usage("/")
+    addresses=[]
+    try:
+        raw=json.loads(run(["ip","-j","addr","show"],timeout=5))
+        addresses=sorted({a.get("local") for item in raw for a in item.get("addr_info",[]) if a.get("local")})
+    except (RuntimeError,ValueError,TypeError,OSError):
+        pass
     return dict(
         hostname=socket.gethostname(), kernel=platform.release(), os=platform.platform(),
         uptime_seconds=int(uptime), cpu_cores=os.cpu_count() or 0, load1=load1,
         memory_total=mem.get("MemTotal", 0), memory_available=mem.get("MemAvailable", 0),
-        disk_total=disk.total, disk_free=disk.free,
+        disk_total=disk.total, disk_free=disk.free, addresses=addresses,
     )
 
 
-def pasarguard_inventory():
-    result = dict(detected=False)
-    if not shutil.which("docker"):
-        return result
+def fair_ack_path(path):
     try:
-        rows = run(["docker", "ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}"], timeout=10).splitlines()
-        for row in rows:
-            parts = row.split("\t", 2)
-            if len(parts) != 3 or "pasarguard/node" not in parts[2]:
-                continue
-            result = dict(detected=True, container=parts[1], image=parts[2], running=True)
-            try:
-                version = run(["docker", "exec", parts[0], "/usr/local/bin/xray", "version"], timeout=10).splitlines()[0]
-                result["xray"] = version[:160]
-            except (RuntimeError, IndexError):
-                pass
-            break
-    except RuntimeError:
-        pass
-    return result
-
-
-def fair_ack():
-    try:
-        path=Path(local_config().get('fair_policy_file',str(STATE/'fair-policy.json')))
         ack=json.loads(Path(str(path)+'.ack').read_text())
         if time.time()-ack.get('updated_at',0)<25 and ack.get('adapter')=='hs-rate-v1':return ack
     except (OSError,ValueError,TypeError):pass
     return {}
 
 
-def apply_fair_manifest(value):
+def pasarguard_nodes_inventory(private=False):
+    result=[]
+    if not shutil.which("docker"):
+        return result
+    try:
+        rows=run(["docker","ps","--format","{{.ID}}\t{{.Names}}\t{{.Image}}"],timeout=10).splitlines()
+        for row in rows:
+            parts=row.split("\t",2)
+            if len(parts)!=3 or "pasarguard/node" not in parts[2]:continue
+            try:
+                meta=json.loads(run(["docker","inspect",parts[0]],timeout=10))[0]
+            except (RuntimeError,ValueError,IndexError):continue
+            env={}
+            for value in meta.get("Config",{}).get("Env",[]):
+                if "=" in value:
+                    key,val=value.split("=",1);env[key]=val
+            try: service_port=int(env.get("SERVICE_PORT",0));api_port=int(env.get("API_PORT",0))
+            except ValueError: service_port=api_port=0
+            mount=next((m for m in meta.get("Mounts",[]) if str(m.get("Destination","")).startswith("/var/lib/")),None)
+            fair_file=Path(mount["Source"])/"hs"/"fair-policy.json" if mount and mount.get("Source") else None
+            item=dict(container=parts[1],image=parts[2],running=True,service_port=service_port,api_port=api_port)
+            try:
+                item["xray"]=run(["docker","exec",parts[0],"/usr/local/bin/xray","version"],timeout=10).splitlines()[0][:160]
+            except (RuntimeError,IndexError):pass
+            item["fair_use"]=fair_ack_path(fair_file) if fair_file else {}
+            item["fair_core_configured"]=bool(env.get("XRAY_EXECUTABLE_PATH","").endswith("xray-hs-fair") and env.get("HS_FAIR_POLICY_FILE"))
+            if private and fair_file:item["_fair_policy_file"]=str(fair_file)
+            result.append(item)
+    except RuntimeError:
+        pass
+    return result
+
+
+def pasarguard_inventory():
+    nodes=pasarguard_nodes_inventory(False)
+    result=dict(detected=bool(nodes),nodes=nodes)
+    if nodes:result.update({k:v for k,v in nodes[0].items() if k not in {"fair_use"}})
+    return result
+
+
+def fair_ack():
+    path=Path(local_config().get('fair_policy_file',str(STATE/'fair-policy.json')))
+    return fair_ack_path(path)
+
+
+def apply_fair_manifest(value, path=None):
     if value is None:return
     if not isinstance(value,dict) or not re.fullmatch('[a-f0-9]{64}',value.get('revision','')):raise ValueError('Invalid fair manifest')
     rates=value.get('rates')
     if not isinstance(rates,dict) or len(rates)>100000:raise ValueError('Invalid fair rates')
     for key,rate in rates.items():
         if not isinstance(key,str) or '\0' not in key or len(key)>512 or type(rate)!=int or not 1<=rate<=12500000000:raise ValueError('Invalid fair entry')
-    path=Path(local_config().get('fair_policy_file',str(STATE/'fair-policy.json')))
+    path=Path(path or local_config().get('fair_policy_file',str(STATE/'fair-policy.json')))
     path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
     data=json.dumps(value,sort_keys=True)
     if path.is_file() and path.read_text()==data:return
@@ -167,6 +195,34 @@ def apply_fair_manifest(value):
     with tmp.open('w') as stream:
         os.chmod(tmp,0o600);stream.write(data);stream.flush();os.fsync(stream.fileno())
     os.replace(tmp,path)
+
+
+def apply_local_manifests(values):
+    local={(int(n.get('service_port',0)),int(n.get('api_port',0))):n for n in pasarguard_nodes_inventory(True)}
+    for item in values or []:
+        try:key=(int(item.get('service_port',0)),int(item.get('api_port',0)))
+        except (TypeError,ValueError):continue
+        node=local.get(key);path=node.get('_fair_policy_file') if node else None
+        if path:apply_fair_manifest(item.get('policy'),path)
+
+
+def panel_container():
+    try:
+        for row in run(["docker","ps","--format","{{.ID}}\t{{.Image}}"],timeout=10).splitlines():
+            cid,image=(row.split("\t",1)+[""])[:2]
+            if "pasarguard/panel" in image:return cid
+    except RuntimeError:pass
+    return ""
+
+
+def local_panel(action,payload):
+    if action not in {'poll','complete'}:raise ValueError('Invalid local bridge action')
+    cid=panel_container()
+    if not cid:raise RuntimeError('PasarGuard panel container not found')
+    proc=subprocess.run(["docker","exec","-i",cid,"python","-m","app.hs_local_bridge",action],input=json.dumps(payload),capture_output=True,text=True,timeout=45)
+    if proc.returncode:raise RuntimeError('Local HS bridge failed; inspect hs-services-agent journal')
+    try:return json.loads(proc.stdout)
+    except ValueError as exc:raise RuntimeError('Local HS bridge returned invalid data') from exc
 
 
 def inventory():
@@ -373,13 +429,7 @@ def main():
                 if args.panel:
                     remote("complete", completed)
                 else:
-                    store.finish(
-                        "panel",
-                        completed["id"],
-                        completed["lease"],
-                        completed["result"],
-                        completed.get("error"),
-                    )
+                    local_panel("complete", completed)
                 completion_file.unlink()
             report = inventory()
             if args.panel:
@@ -387,11 +437,9 @@ def main():
                 apply_fair_manifest(response.get("fair_policy"))
                 job=response.get("job")
             else:
-                with store.lock():
-                    reports = store.read("reports.json")
-                    reports["panel"] = report
-                    store.write("reports.json", reports)
-                job = store.claim("panel")
+                response=local_panel("poll", report)
+                apply_local_manifests(response.get("manifests",[]))
+                job=response.get("job")
             if job:
                 result = {}
                 error = None
@@ -407,10 +455,11 @@ def main():
                                 if future.done():raise
                                 try:
                                     heartbeat=inventory();heartbeat['job_running']=True
-                                    if args.panel:apply_fair_manifest(remote('poll',heartbeat).get('fair_policy'))
+                                    if args.panel:
+                                        apply_fair_manifest(remote('poll',heartbeat).get('fair_policy'))
                                     else:
-                                        with store.lock():
-                                            reports=store.read('reports.json');reports['panel']=heartbeat;store.write('reports.json',reports)
+                                        bridge=local_panel('poll',heartbeat)
+                                        apply_local_manifests(bridge.get('manifests',[]))
                                 except Exception as exc:
                                     print('HS heartbeat:',type(exc).__name__,flush=True)
                 except Exception as exc:
@@ -428,7 +477,7 @@ def main():
                 if args.panel:
                     remote("complete", body)
                 else:
-                    store.finish("panel", job["id"], job["lease"], result, error)
+                    local_panel("complete", body)
                 completion_file.unlink()
         except Exception as exc:
             print("HS service agent:", type(exc).__name__, str(exc), flush=True)

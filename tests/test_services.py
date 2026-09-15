@@ -217,3 +217,50 @@ def test_bridge_inventory_reports_system_and_protocol(monkeypatch):
     assert report['capabilities']['bridge'] is True
     assert report['pasarguard']['detected'] is True
     assert report['system']['hostname']
+
+
+def test_local_multi_node_inventory_is_instance_scoped(tmp_path, monkeypatch):
+    one = tmp_path / 'node-one'
+    two = tmp_path / 'node-two'
+    (one / 'hs').mkdir(parents=True)
+    (two / 'hs').mkdir(parents=True)
+    ack = {'adapter':'hs-rate-v1','revision':'a'*64,'updated_at':time.time()}
+    (one / 'hs' / 'fair-policy.json.ack').write_text(json.dumps(ack))
+    def fake_run(args, timeout=30):
+        if args[:3] == ['docker','ps','--format']:
+            return 'c1\tnode\tpasarguard/node:latest\nc2\tnode-p-x\tpasarguard/node:latest\n'
+        if args[:2] == ['docker','inspect']:
+            cid=args[2]
+            source = one if cid == 'c1' else two
+            service = '62050' if cid == 'c1' else '62152'
+            api = '62051' if cid == 'c1' else '62153'
+            return json.dumps([{'Config':{'Env':[f'SERVICE_PORT={service}',f'API_PORT={api}','XRAY_EXECUTABLE_PATH=/var/lib/xray-hs-fair','HS_FAIR_POLICY_FILE=/var/lib/hs/fair-policy.json']},'Mounts':[{'Source':str(source),'Destination':'/var/lib/node'}]}])
+        if args[:2] == ['docker','exec']:
+            return 'Xray 26.3.27\n'
+        raise AssertionError(args)
+    monkeypatch.setattr(agent.shutil,'which',lambda name: '/usr/bin/'+name if name=='docker' else None)
+    monkeypatch.setattr(agent,'run',fake_run)
+    nodes=agent.pasarguard_nodes_inventory()
+    assert [(n['service_port'],n['api_port']) for n in nodes] == [(62050,62051),(62152,62153)]
+    assert nodes[0]['fair_use']['adapter']=='hs-rate-v1'
+    assert nodes[1]['fair_use']=={}
+    assert all(n['fair_core_configured'] for n in nodes)
+
+
+def test_local_manifests_write_each_node_policy_file(tmp_path, monkeypatch):
+    one = tmp_path / 'one'
+    two = tmp_path / 'two'
+    (one / 'hs').mkdir(parents=True)
+    (two / 'hs').mkdir(parents=True)
+    monkeypatch.setattr(agent, 'pasarguard_nodes_inventory', lambda private=False: [
+        {'service_port':62050,'api_port':62051,'_fair_policy_file':str(one/'hs'/'fair-policy.json')},
+        {'service_port':62152,'api_port':62153,'_fair_policy_file':str(two/'hs'/'fair-policy.json')},
+    ])
+    a={'revision':'a'*64,'rates':{'1\0paid':1250000}}
+    b={'revision':'b'*64,'rates':{'2\0paid':2500000}}
+    agent.apply_local_manifests([
+        {'service_port':62050,'api_port':62051,'policy':a},
+        {'service_port':62152,'api_port':62153,'policy':b},
+    ])
+    assert json.loads((one/'hs'/'fair-policy.json').read_text()) == a
+    assert json.loads((two/'hs'/'fair-policy.json').read_text()) == b
