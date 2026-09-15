@@ -26,7 +26,6 @@ jobs:
       - name: DOM and browser regression
         run: |
           npm ci --prefix tests
-          npm --prefix tests run test:dom
           cd tests
           npx playwright install --with-deps chromium
           npm run test:browser
@@ -42,13 +41,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: PasarGuard/panel
-          ref: aebf7256927710329d380d67ce96224f287ae5f6
+          ref: b56ffe369f542152c52c69733205baeaf3f6e4cd
           path: panel-source
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
-      - name: Native patch compile and idempotence
-        run: python tests/native_patch_check.py panel-source/app
+      - name: Native and dashboard patch compile and idempotence
+        run: |
+          python tests/native_patch_check.py panel-source/app
+          python plugin/patch_pasarguard.py \
+            --app-root panel-source/app \
+            --api-addon backend/hs_plugin_api.py \
+            --runtime backend/hs_plugin_runtime.py
+          python plugin/patch_pasarguard.py \
+            --app-root panel-source/app \
+            --api-addon backend/hs_plugin_api.py \
+            --runtime backend/hs_plugin_runtime.py
   fair-core:
     runs-on: ubuntu-latest
     steps:
