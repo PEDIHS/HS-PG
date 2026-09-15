@@ -40,6 +40,17 @@ def ready(target, revision):
             and ack.get('adapter')=='hs-rate-v1' and ack.get('revision')==revision)
 
 
+def _replica_ready(state,target,record,uid,current,policies):
+    revision=record.get('revision')
+    expected={str(value) for value in record.get('targets',[target])} or {str(target)}
+    for peer_target in expected:
+        peer=state.get(peer_target)
+        if peer is None or peer.get('revision')!=revision or not ready(peer_target,revision):return False
+        if not set(current).issubset(peer.get('reached',{}).get(uid,[])):return False
+        if any(peer.get('policies',{}).get(h)!=policies[h] for h in current):return False
+    return True
+
+
 def user_state(user):
     native=str(getattr(getattr(user,'status','active'),'value',getattr(user,'status','active')))
     if native!='active' or not enabled():return None
@@ -51,7 +62,7 @@ def user_state(user):
         ids=record.get('users',{}).get(uid,[])
         current={h:policies[h] for h in ids if h in policies and used>=policies[h]['threshold_bytes']}
         if not current:continue
-        if (not ready(target,record.get('revision')) or not set(current).issubset(record.get('reached',{}).get(uid,[])) or any(record.get('policies',{}).get(h)!=policies[h] for h in current)):pending=True
+        if not _replica_ready(state,target,record,uid,current,policies):pending=True
         applicable.update(current)
     if not applicable:return None
     return {'status':'active' if pending else 'fair_limited','pending':pending,'host_ids':list(applicable)}
@@ -88,9 +99,10 @@ async def manifest(db,target):
     for host in hosts:
         counts[host.inbound_tag] = counts.get(host.inbound_tag, 0) + 1
     configured={str(h.id):(h.inbound_tag,validate_policy(policies[str(h.id)])) for h in hosts if str(h.id) in policies and not h.is_disabled and counts[h.inbound_tag] == 1}
-    # Replicated Nodes using this exact Core receive the same Host policy. Each
-    # target stores and acknowledges its own runtime revision; user_state keeps
-    # Fair limited pending until every applicable target has acknowledged it.
+    peers=sorted(str(value) for value in (await db.execute(select(Node.id).where(Node.core_config_id==node.core_config_id))).scalars().all())
+    # Replicated Nodes using this exact Core receive the same Host policy. Every
+    # record carries the complete expected target set so a Node that never polls
+    # cannot be mistaken for an acknowledged replica.
     rates={};users={};reached={}
     rows=(await db.execute(select(User.id,User.used_traffic,ProxyInbound.tag).select_from(User)
         .join(users_groups_association,users_groups_association.c.user_id==User.id)
@@ -112,18 +124,18 @@ async def manifest(db,target):
         if ids:users[uid]=ids
     revision=hashlib.sha256(json.dumps(rates,sort_keys=True,separators=(',',':')).encode()).hexdigest()
     with store.lock():
-        runtime=store.read('fair-runtime.json');runtime[str(target)]={'revision':revision,'users':users,'reached':reached,'policies':{h:policies[h] for h in configured},'updated_at':time.time()};store.write('fair-runtime.json',runtime)
+        runtime=store.read('fair-runtime.json');runtime[str(target)]={'revision':revision,'targets':peers,'users':users,'reached':reached,'policies':{h:policies[h] for h in configured},'updated_at':time.time()};store.write('fair-runtime.json',runtime)
     return {'revision':revision,'rates':rates}
 
 
 def limited_groups():
     if not enabled():return {}
-    groups={};policies=snapshot('fair-use.json')
-    for target,record in snapshot('fair-runtime.json').items():
-        if not ready(target,record.get('revision')):continue
+    groups={};policies=snapshot('fair-use.json');state=snapshot('fair-runtime.json')
+    for target,record in state.items():
         for uid,ids in record.get('reached',{}).items():
-            valid=[policies[h]['threshold_bytes'] for h in ids if h in policies and policies[h]==record.get('policies',{}).get(h)]
-            if valid:groups.setdefault(min(valid),set()).add(int(uid))
+            current={h:policies[h] for h in ids if h in policies}
+            if not current or not _replica_ready(state,target,record,uid,current,policies):continue
+            groups.setdefault(min(p['threshold_bytes'] for p in current.values()),set()).add(int(uid))
     return groups
 
 
