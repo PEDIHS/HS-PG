@@ -6,9 +6,9 @@
 
 ## بازیابی و ادغام Services
 
-فایروال HS حذف شده است؛ آپدیت سرویس‌ها و قوانین اختصاصی نسخهٔ قبلی را پاک می‌کند. مدیریت Certbot، ابزار WARP داخل Outbounds، پروکسی تلگرام داخل Inbounds و سیاست Fair Use داخل فرم هر Host قرار دارند. کلیدهای قابلیت‌ها ظاهر یکسان دارند.
+فایروال HS حذف شده است؛ آپدیت سرویس‌ها و قوانین اختصاصی نسخهٔ قبلی را پاک می‌کند. مدیریت Certbot، ابزار WARP داخل Outbounds، پروکسی تلگرام داخل Inbounds و Fair Use داخل فرم‌های native Host و Group قرار دارد و Save جدا ندارد؛ همراه Save اصلی PasarGuard ذخیره می‌شود. Hostهای دارای inbound مشترک یک policy مشترک دارند و Group می‌تواند Always یا After usage باشد. کلیدهای قابلیت‌ها ظاهر یکسان دارند.
 
-**کاهش سرعت Fair Use نیازمند Agent نود و هستهٔ Xray مجهز به adapter HS است.** تا تأیید اجرای سیاست توسط هسته، وضعیت کاربر به‌عنوان Fair limited نمایش داده نمی‌شود. [راهنمای نصب، پاک‌سازی و محدودیت‌ها](docs/hs-services.md) را ببینید.
+**کاهش سرعت Fair Use نیازمند HS Node Bridge و هستهٔ Xray مجهز به adapter HS است.** تا تأیید اجرای سیاست توسط هسته، وضعیت کاربر به‌عنوان Fair limited نمایش داده نمی‌شود. [راهنمای نصب، پاک‌سازی و محدودیت‌ها](docs/hs-services.md) را ببینید.
 
 ## قابلیت اول: Host Usage Ratio
 
@@ -52,7 +52,7 @@ PasarGuard روی Node یک `core_config_id` دارد. HS Plugin ابتدا Core
 
 ### نکته مهم درباره Hostهای دارای Inbound مشترک
 
-Xray/PasarGuard در آمار فعلی، traffic کاربر را به شکل `user` ثبت می‌کند و Host address/SNI را در آمار user نگه نمی‌دارد. بنابراین دو Host که دقیقاً یک `inbound_tag` دارند از نظر accounting قابل تفکیک قطعی نیستند. HS Plugin برای جلوگیری از حساب اشتباه، **همه Hostهای دارای یک inbound مشترک را با یک Ratio/offset مشترک** مدیریت می‌کند.
+Xray/PasارGuard در آمار فعلی، traffic کاربر را به شکل `user` ثبت می‌کند و Host address/SNI را در آمار user نگه نمی‌دارد. بنابراین دو Host که دقیقاً یک `inbound_tag` دارند از نظر accounting قابل تفکیک قطعی نیستند. HS Plugin برای جلوگیری از حساب اشتباه، **همه Hostهای دارای یک inbound مشترک را با یک Ratio/offset مشترک** مدیریت می‌کند.
 
 برای Hostهایی که inbound مستقل دارند، attribution مستقل است. افزونه برای این کار شناسه‌های آماری داخلی per-inbound می‌سازد، در زمان ثبت usage آن‌ها را دوباره به User ID اصلی برمی‌گرداند و Online/IP stats را نیز روی شناسه اصلی + aliasهای داخلی تجمیع می‌کند.
 
