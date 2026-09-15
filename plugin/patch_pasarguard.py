@@ -237,14 +237,6 @@ def patch_usage(text: str) -> str:
         'value = int(param["value"] * max(0.0, coeff + param.get("hs_ratio_offset", 0.0)))',
     ]
     new_expression = 'value = int(param["value"] * max(0.0, param.get("hs_absolute_ratio", coeff + param.get("hs_ratio_offset", 0.0))))'
-    if new_expression not in text:
-        replaced = False
-        for old in old_expressions:
-            if old in text:
-                text = text.replace(old, new_expression)
-                replaced = True
-        if not replaced:
-            raise RuntimeError("usage coefficient anchors not found")
 
     old_p_expressions = [
         '"value": int(p["value"] * coeff),',
@@ -252,14 +244,20 @@ def patch_usage(text: str) -> str:
         '"value": int(p["value"] * max(0.0, coeff + p.get("hs_ratio_offset", 0.0))),',
     ]
     new_p_expression = '"value": int(p["value"] * max(0.0, p.get("hs_absolute_ratio", coeff + p.get("hs_ratio_offset", 0.0)))),'
+
+    coefficient_anchor_found = new_expression in text or new_p_expression in text
+    if new_expression not in text:
+        for old in old_expressions:
+            if old in text:
+                text = text.replace(old, new_expression)
+                coefficient_anchor_found = True
     if new_p_expression not in text:
-        replaced = False
         for old in old_p_expressions:
             if old in text:
                 text = text.replace(old, new_p_expression)
-                replaced = True
-        if not replaced:
-            raise RuntimeError("node usage log coefficient anchor not found")
+                coefficient_anchor_found = True
+    if not coefficient_anchor_found:
+        raise RuntimeError("usage coefficient anchors not found")
 
     return text
 
