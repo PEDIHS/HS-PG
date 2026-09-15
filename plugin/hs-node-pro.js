@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.7.3';
+  const VERSION = '0.8.0';
   const STYLE_ID = 'hs-node-pro-style';
   const BLOCK_CLASS = 'hs-node-pro';
   const CARD_CLASS = 'hs-node-pro-card';
@@ -18,6 +18,7 @@
   let statsCache = {};
   let busy = false;
   let renderQueued = false;
+  let nodesRefreshedAt = 0;
 
   const history = new Map();
   const revealedIps = new Set();
@@ -26,6 +27,9 @@
     .${CARD_CLASS}{
       min-width:0!important;
       overflow:hidden!important;
+      border-color:color-mix(in srgb,var(--border) 86%,rgba(67,183,255,.14))!important;
+      background:linear-gradient(145deg,color-mix(in srgb,var(--card) 98%,rgba(56,232,140,.035)),color-mix(in srgb,var(--card) 98%,rgba(67,183,255,.035)))!important;
+      box-shadow:inset 0 1px rgba(255,255,255,.025),0 14px 34px -32px rgba(0,0,0,.62)!important;
     }
     .${CARD_CLASS}::before{
       content:none!important;
@@ -40,6 +44,80 @@
       pointer-events:none;
       min-width:0;
     }
+    .${BLOCK_CLASS}-network{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      gap:8px;
+      margin-bottom:8px;
+      min-width:0;
+    }
+    .${BLOCK_CLASS}-network-metric{
+      height:49px;
+      min-width:0;
+      padding:7px 9px 6px;
+      overflow:hidden;
+      border:1px solid color-mix(in srgb,var(--border) 78%,transparent);
+      border-radius:11px;
+      background:linear-gradient(145deg,color-mix(in srgb,var(--card) 94%,rgba(255,255,255,.04)),color-mix(in srgb,var(--card) 99%,transparent));
+      box-shadow:inset 0 1px rgba(255,255,255,.025);
+    }
+    .${BLOCK_CLASS}-network-head{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:7px;
+      min-width:0;
+    }
+    .${BLOCK_CLASS}-network-label{
+      display:flex;
+      align-items:center;
+      gap:5px;
+      color:var(--muted-foreground);
+      font-size:8.5px;
+      line-height:1;
+      font-weight:700;
+      letter-spacing:.035em;
+      white-space:nowrap;
+    }
+    .${BLOCK_CLASS}-live-dot{
+      width:5px;
+      height:5px;
+      flex:none;
+      border-radius:999px;
+      background:#38e88c;
+      box-shadow:0 0 7px rgba(56,232,140,.55);
+      animation:hs-node-live-pulse 1.7s ease-in-out infinite;
+    }
+    @keyframes hs-node-live-pulse{50%{opacity:.38;box-shadow:0 0 2px rgba(56,232,140,.2)}}
+    .${BLOCK_CLASS}-network-rate{
+      color:var(--foreground);
+      font-size:11px;
+      line-height:1;
+      font-weight:740;
+      font-variant-numeric:tabular-nums;
+      white-space:nowrap;
+    }
+    .${BLOCK_CLASS}-network-main{
+      display:grid;
+      grid-template-columns:auto minmax(0,1fr);
+      align-items:end;
+      gap:7px;
+      margin-top:5px;
+      min-width:0;
+    }
+    .${BLOCK_CLASS}-network-spark{
+      height:17px;
+      min-width:0;
+      overflow:hidden;
+      opacity:.92;
+    }
+    .${BLOCK_CLASS}-network-spark svg{display:block;width:100%;height:100%;overflow:visible}
+    .${BLOCK_CLASS}-network-spark path{fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+    .${BLOCK_CLASS}-network-spark.rx path{stroke:#43b7ff;filter:drop-shadow(0 0 2px rgba(67,183,255,.25))}
+    .${BLOCK_CLASS}-network-spark.tx path{stroke:#38e88c;filter:drop-shadow(0 0 2px rgba(56,232,140,.22))}
+    .${BLOCK_CLASS}-network-arrow.rx{color:#43b7ff}
+    .${BLOCK_CLASS}-network-arrow.tx{color:#38e88c}
+
     .${BLOCK_CLASS}-resources{
       display:grid;
       grid-template-columns:minmax(0,1fr) minmax(0,1fr);
@@ -48,7 +126,7 @@
     }
     .${BLOCK_CLASS}-metric{
       min-width:0;
-      height:69px;
+      height:64px;
       padding:9px 10px 8px;
       overflow:hidden;
       border:1px solid color-mix(in srgb,var(--border) 84%,transparent);
@@ -181,8 +259,12 @@
     .${IP_BUTTON_CLASS} svg{width:14px;height:14px;display:block}
 
     @media(max-width:390px){
+      .${BLOCK_CLASS}-network{gap:6px;margin-bottom:6px}
+      .${BLOCK_CLASS}-network-metric{height:46px;padding:6px 7px 5px}
+      .${BLOCK_CLASS}-network-rate{font-size:10px}
+      .${BLOCK_CLASS}-network-spark{height:15px}
       .${BLOCK_CLASS}-resources{gap:6px}
-      .${BLOCK_CLASS}-metric{height:66px;padding:8px}
+      .${BLOCK_CLASS}-metric{height:61px;padding:8px}
       .${BLOCK_CLASS}-usage{font-size:7.8px}
       .${BLOCK_CLASS}-chart-row{grid-template-columns:minmax(0,1fr) 31px;gap:5px;margin-top:6px}
       .${BLOCK_CLASS}-spark{height:27px}
@@ -236,6 +318,15 @@
     return `${n.toFixed(digits)} ${units[unit]}`;
   }
 
+  function formatBandwidth(value) {
+    const bytes = Math.max(0, Number(value) || 0);
+    const bits = bytes * 8;
+    if (bits >= 1024 * 1024 * 1024) return `${(bits / (1024 * 1024 * 1024)).toFixed(bits >= 10 * 1024 * 1024 * 1024 ? 1 : 2)} Gbps`;
+    if (bits >= 1024 * 1024) return `${(bits / (1024 * 1024)).toFixed(bits >= 100 * 1024 * 1024 ? 0 : 1)} Mbps`;
+    if (bits >= 1024) return `${(bits / 1024).toFixed(bits >= 100 * 1024 ? 0 : 1)} Kbps`;
+    return `${Math.round(bits)} bps`;
+  }
+
   function formatCoreValue(value) {
     const n = Math.max(0, Number(value) || 0);
     if (n >= 10) return n.toFixed(1);
@@ -264,6 +355,8 @@
       const ramPct = stats.mem_total ? clamp((Number(stats.mem_used) / Number(stats.mem_total)) * 100) : 0;
       pushHistory(node.id, 'cpu', clamp(stats.cpu_usage));
       pushHistory(node.id, 'ram', ramPct);
+      pushHistory(node.id, 'rx', Math.max(0, Number(stats.incoming_bandwidth_speed) || 0));
+      pushHistory(node.id, 'tx', Math.max(0, Number(stats.outgoing_bandwidth_speed) || 0));
     }
   }
 
@@ -300,6 +393,19 @@
     }));
   }
 
+  function ratePointSeries(values, width, height, pad) {
+    const source = smoothSeries(values, .42);
+    const maxValue = Math.max(...source, 1);
+    const minValue = Math.max(0, Math.min(...source) * .88);
+    const ceiling = Math.max(maxValue * 1.08, minValue + 1);
+    const range = Math.max(1, ceiling - minValue);
+    const step = source.length > 1 ? (width - pad * 2) / (source.length - 1) : 0;
+    return source.map((value, index) => ({
+      x: pad + index * step,
+      y: height - pad - ((Math.max(minValue, Number(value) || 0) - minValue) / range) * (height - pad * 2),
+    }));
+  }
+
   function smoothPath(points) {
     if (!points.length) return '';
     if (points.length === 1) return `M${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
@@ -320,6 +426,11 @@
 
   function spark(values, width = 180, height = 29) {
     const points = pointSeries(values, width, height, 2);
+    return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><path d="${smoothPath(points)}"/></svg>`;
+  }
+
+  function rateSpark(values, width = 120, height = 17) {
+    const points = ratePointSeries(values, width, height, 1.5);
     return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><path d="${smoothPath(points)}"/></svg>`;
   }
 
@@ -466,8 +577,26 @@
     const ramPercent = `${ramPct.toFixed(ramPct < 10 ? 1 : 0)}%`;
     const cpuUsageText = cpuCores ? `${formatCoreValue(cpuUsed)} / ${formatCoreValue(cpuCores)} cores` : '—';
     const ramUsageText = ramTotal ? `${formatBytes(ramUsed)} / ${formatBytes(ramTotal)}` : '—';
+    const rx = Math.max(0, Number(stats.incoming_bandwidth_speed) || 0);
+    const tx = Math.max(0, Number(stats.outgoing_bandwidth_speed) || 0);
 
     const html = `
+      <div class="${BLOCK_CLASS}-network" aria-label="Live network traffic">
+        <div class="${BLOCK_CLASS}-network-metric" data-hs-network="rx">
+          <div class="${BLOCK_CLASS}-network-head">
+            <div class="${BLOCK_CLASS}-network-label"><span class="${BLOCK_CLASS}-live-dot"></span><span class="${BLOCK_CLASS}-network-arrow rx">↓</span><span>RX</span></div>
+            <span class="${BLOCK_CLASS}-network-rate">${formatBandwidth(rx)}</span>
+          </div>
+          <div class="${BLOCK_CLASS}-network-main"><span class="${BLOCK_CLASS}-usage">RECEIVE</span><div class="${BLOCK_CLASS}-network-spark rx">${rateSpark(getHistory(node.id, 'rx'))}</div></div>
+        </div>
+        <div class="${BLOCK_CLASS}-network-metric" data-hs-network="tx">
+          <div class="${BLOCK_CLASS}-network-head">
+            <div class="${BLOCK_CLASS}-network-label"><span class="${BLOCK_CLASS}-live-dot"></span><span class="${BLOCK_CLASS}-network-arrow tx">↑</span><span>TX</span></div>
+            <span class="${BLOCK_CLASS}-network-rate">${formatBandwidth(tx)}</span>
+          </div>
+          <div class="${BLOCK_CLASS}-network-main"><span class="${BLOCK_CLASS}-usage">SEND</span><div class="${BLOCK_CLASS}-network-spark tx">${rateSpark(getHistory(node.id, 'tx'))}</div></div>
+        </div>
+      </div>
       <div class="${BLOCK_CLASS}-resources">
         <div class="${BLOCK_CLASS}-metric">
           <div class="${BLOCK_CLASS}-head">
@@ -526,11 +655,14 @@
     if (!enabled || !onNodesPage() || busy) return;
     busy = true;
     try {
+      const now = Date.now();
+      const refreshNodes = !nodesCache.length || now - nodesRefreshedAt >= 30000;
       const [nodesData, statsData] = await Promise.all([
-        jsonFetch('/api/nodes?limit=1000'),
+        refreshNodes ? jsonFetch('/api/nodes?limit=1000') : Promise.resolve({nodes: nodesCache}),
         jsonFetch('/api/nodes/realtime_stats'),
       ]);
-      nodesCache = Array.isArray(nodesData?.nodes) ? nodesData.nodes : [];
+      if (refreshNodes) nodesRefreshedAt = now;
+      nodesCache = Array.isArray(nodesData?.nodes) ? nodesData.nodes : nodesCache;
       statsCache = statsData && typeof statsData === 'object' ? statsData : {};
       sampleHistory();
       renderAll();
@@ -577,7 +709,7 @@
     });
 
     refreshFeatureState().then(refreshData);
-    refreshTimer = window.setInterval(refreshData, 5000);
+    refreshTimer = window.setInterval(refreshData, 2000);
     stateTimer = window.setInterval(refreshFeatureState, 30000);
   }
 
