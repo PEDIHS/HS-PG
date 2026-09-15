@@ -82,13 +82,26 @@ def test_manifest_uses_each_users_traffic_and_group_access(database):
     assert store.read('fair-runtime.json')['7']['reached'] == {}
 
 
-@pytest.mark.parametrize('change', ['second_host', 'second_node', 'second_core', 'disabled_host', 'disabled_feature'])
-def test_no_accidental_limit_on_other_host_or_node(database, monkeypatch, change):
+def test_same_core_replicated_to_second_node_gets_same_manifest(database):
+    db, session, models = database
+    session.add(models.Node(id=8, core_config_id=1))
+    session.commit()
+    first = asyncio.run(fair.manifest(db, '7'))
+    second = asyncio.run(fair.manifest(db, '8'))
+    expected = {'1\0paid': 2_500_000, '2\0paid': 12_500_000}
+    assert first['rates'] == expected
+    assert second['rates'] == expected
+    assert first['revision'] == second['revision']
+    runtime = store.read('fair-runtime.json')
+    assert runtime['7']['reached'] == {'1': ['1']}
+    assert runtime['8']['reached'] == {'1': ['1']}
+
+
+@pytest.mark.parametrize('change', ['second_host', 'second_core', 'disabled_host', 'disabled_feature'])
+def test_no_accidental_limit_on_other_host_or_core(database, monkeypatch, change):
     db, session, models = database
     if change == 'second_host':
         session.add(models.ProxyHost(id=2, inbound_tag='paid'))
-    elif change == 'second_node':
-        session.add(models.Node(id=8, core_config_id=1))
     elif change == 'second_core':
         session.add(models.CoreConfig(id=2, config={'inbounds': [{'tag': 'paid', 'protocol': 'vless'}]}))
     elif change == 'disabled_host':
