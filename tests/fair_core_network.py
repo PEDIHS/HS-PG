@@ -50,7 +50,13 @@ def transfer(proxy_port, http_port, user, upload=False):
         request = (f'{"POST" if upload else "GET"} / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {SIZE if upload else 0}\r\n\r\n').encode()
         conn.sendall(header + request + (b'x' * SIZE if upload else b''))
         response = bytearray()
-        while chunk := conn.recv(65536):
+        while True:
+            try:
+                chunk = conn.recv(65536)
+            except TimeoutError as exc:
+                raise AssertionError(f'user={user} upload={upload} received={len(response)} prefix={bytes(response[:160])!r}') from exc
+            if not chunk:
+                break
             response.extend(chunk)
             # VLESS may keep the duplex connection open after the HTTP body.
             # Measure the completed transfer, independently of its idle timeout.
@@ -72,10 +78,12 @@ def run(binary):
         root = Path(directory)
         policy = root / 'fair-policy.json'
         port = free_port()
-        config = {'log': {'loglevel': 'warning'}, 'inbounds': [{'listen': '127.0.0.1', 'port': port, 'tag': 'paid', 'protocol': 'vless', 'settings': {'decryption': 'none', 'clients': [{'id': str(IDS[i]), 'email': str(i)} for i in IDS]}}], 'outbounds': [{'protocol': 'freedom'}]}
+        config = {'log': {'loglevel': 'debug'}, 'inbounds': [{'listen': '127.0.0.1', 'port': port, 'tag': 'paid', 'protocol': 'vless', 'settings': {'decryption': 'none', 'clients': [{'id': str(IDS[i]), 'email': str(i)} for i in IDS]}}], 'outbounds': [{'protocol': 'freedom'}]}
         config_file = root / 'config.json'
         config_file.write_text(json.dumps(config))
-        process = subprocess.Popen([str(Path(binary).resolve()), 'run', '-c', str(config_file)], env={**os.environ, 'HS_FAIR_POLICY_FILE': str(policy)}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        log = root / 'xray.log'
+        with log.open('w') as output:
+            process = subprocess.Popen([str(Path(binary).resolve()), 'run', '-c', str(config_file)], env={**os.environ, 'HS_FAIR_POLICY_FILE': str(policy)}, stdout=output, stderr=subprocess.STDOUT)
 
         def apply(rates):
             revision = hashlib.sha256(json.dumps(rates, sort_keys=True).encode()).hexdigest()
@@ -85,7 +93,7 @@ def run(binary):
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 if process.poll() is not None:
-                    raise AssertionError(process.stdout.read().decode())
+                    raise AssertionError(log.read_text())
                 try:
                     if json.loads(Path(str(policy) + '.ack').read_text())['revision'] == revision:
                         return
@@ -111,6 +119,9 @@ def run(binary):
             restored = transfer(port, server.server_port, 1)
             assert restored < elapsed * .5, f'Policy removal did not restore speed: {restored}'
             print(f'Real VLESS test passed: shared upload/download {elapsed:.2f}s; other user {other_time:.2f}s; reset {restored:.2f}s')
+        except Exception:
+            print(log.read_text()[-10000:], flush=True)
+            raise
         finally:
             process.terminate()
             try:
