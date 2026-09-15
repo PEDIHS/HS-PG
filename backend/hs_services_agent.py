@@ -4,6 +4,7 @@
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -12,6 +13,8 @@ import shutil
 import socket
 import ssl
 import subprocess
+import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -21,7 +24,10 @@ import hs_services as store
 LOCAL_CONFIG = Path("/etc/hs-pg/services.json")
 STATE = Path(os.getenv("HS_SERVICES_AGENT_DATA", "/var/lib/hs-pg-agent"))
 MT_BINARY = "/usr/local/bin/mtproto-proxy"
-BRIDGE_VERSION = "1.0.0"
+BRIDGE_VERSION = "1.1.0"
+BRIDGE_ROOT = Path(os.getenv("HS_BRIDGE_ROOT", "/opt/hs-pg/backend"))
+BRIDGE_SOURCE = "https://raw.githubusercontent.com/PEDIHS/HS-PG/main/backend"
+BRIDGE_FILES = ("hs_services.py", "hs_services_agent.py")
 
 
 def run(args, timeout=30):
@@ -384,7 +390,55 @@ def proxy_action(identity, action):
     return dict(id=identity, action=action)
 
 
-def execute(job):
+def bridge_update():
+    """Atomically refresh the fixed HS Bridge runtime from the official repository."""
+    BRIDGE_ROOT.mkdir(parents=True, exist_ok=True)
+    previous = {}
+    hashes = {}
+    with tempfile.TemporaryDirectory(prefix="hs-bridge-update-") as folder:
+        stage = Path(folder)
+        for name in BRIDGE_FILES:
+            url = f"{BRIDGE_SOURCE}/{name}"
+            with urllib.request.urlopen(url, timeout=30) as response:
+                data = response.read(1024 * 1024 + 1)
+            if not data or len(data) > 1024 * 1024 or b"\0" in data:
+                raise ValueError("Invalid HS Bridge update payload")
+            try:
+                data.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError("Invalid HS Bridge update encoding") from exc
+            target = stage / name
+            target.write_bytes(data)
+            os.chmod(target, 0o644)
+            hashes[name] = hashlib.sha256(data).hexdigest()
+        run([sys.executable, "-m", "py_compile", *[str(stage / name) for name in BRIDGE_FILES]], timeout=30)
+        for name in BRIDGE_FILES:
+            target = BRIDGE_ROOT / name
+            previous[name] = target.read_bytes() if target.is_file() else None
+        try:
+            for name in BRIDGE_FILES:
+                target = BRIDGE_ROOT / name
+                tmp = target.with_name(target.name + ".update")
+                tmp.write_bytes((stage / name).read_bytes())
+                os.chmod(tmp, 0o644)
+                os.replace(tmp, target)
+        except Exception:
+            for name, data in previous.items():
+                target = BRIDGE_ROOT / name
+                if data is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    tmp = target.with_name(target.name + ".rollback")
+                    tmp.write_bytes(data); os.chmod(tmp, 0o644); os.replace(tmp, target)
+            raise
+    return {"updated": True, "files": hashes, "_restart_bridge": True}
+
+
+def execute(job, remote_bridge=False):
+    if job["action"] == "bridge-update":
+        if not remote_bridge:
+            raise ValueError("Bridge update is only valid for an enrolled remote Node")
+        return bridge_update()
     if job["action"] == "renew":
         return renew(job["resource"])
     if job["action"] == "mtproxy-create":
@@ -446,7 +500,7 @@ def main():
                 try:
                     # Keep traffic policy synchronization alive during slow ACME jobs.
                     with ThreadPoolExecutor(max_workers=1) as pool:
-                        future=pool.submit(execute,job)
+                        future=pool.submit(execute,job,bool(args.panel))
                         while True:
                             try:
                                 result=future.result(timeout=10)
@@ -464,6 +518,7 @@ def main():
                                     print('HS heartbeat:',type(exc).__name__,flush=True)
                 except Exception as exc:
                     error = str(exc)
+                restart_bridge = bool(result.pop("_restart_bridge", False)) if isinstance(result, dict) else False
                 body = dict(
                     id=job["id"], lease=job["lease"], result=result, error=error
                 )
@@ -479,6 +534,15 @@ def main():
                 else:
                     local_panel("complete", body)
                 completion_file.unlink()
+                if restart_bridge and args.panel:
+                    try:
+                        run([
+                            "systemd-run", "--quiet", "--on-active=1s",
+                            "/bin/systemctl", "restart", "hs-node-bridge.service",
+                        ], timeout=10)
+                    except Exception as exc:
+                        print("HS Bridge update restart:", type(exc).__name__, str(exc), flush=True)
+                    return
         except Exception as exc:
             print("HS service agent:", type(exc).__name__, str(exc), flush=True)
         time.sleep(10)

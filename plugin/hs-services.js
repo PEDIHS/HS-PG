@@ -133,7 +133,8 @@
       const bridgeText=local?'Managed directly by the panel · no Node Bridge install required':(bridge.version?`Bridge ${esc(bridge.version)} · ${esc(bridge.transport||'HTTPS')}`:'HS Bridge has not reported yet.');
       const certState=local?'via Main panel':t.capabilities?.certbot?'ready':'not reported';
       const fairState=t.capabilities?.fair_rate_limit?'ACK ready':pg.fair_core_configured?'waiting for ACK':'Fair Core not active';
-      const actionHtml=local?'<span class="hs-s-badge">LOCAL AUTO BRIDGE</span>':`<button data-bootstrap="${esc(t.id)}">${t.enrolled?'Rotate / reinstall Bridge':'Generate install command'}</button>`;
+      const updateHtml=!local&&t.online&&t.enrolled?`<button data-bridge-update="${esc(t.id)}">Update Bridge</button>`:'';
+      const actionHtml=local?'<span class="hs-s-badge">LOCAL AUTO BRIDGE</span>':`<button data-bootstrap="${esc(t.id)}">${t.enrolled?'Rotate / reinstall Bridge':'Generate install command'}</button>${updateHtml}`;
       return `<article class="hs-s-card"><div class="hs-cert-top"><span class="hs-s-badge">Node ${esc(t.id)}</span><span class="hs-cert-online">${t.online?'●':'○'} ${state}</span></div><h3>${esc(t.name)}</h3><p>${bridgeText}</p><div class="hs-s-status">${pg.detected?`PasarGuard ${esc(pg.image||'node')}<br>Xray ${esc(pg.xray||'—')}`:'PasarGuard inventory unavailable'}${sys.hostname?`<br>${esc(sys.hostname)} · CPU ${esc(sys.cpu_cores||'—')} · RAM ${bytes(ramUsed)} / ${bytes(sys.memory_total)} · Disk free ${bytes(sys.disk_free)}`:''}<br>Certbot ${certState} · Fair Use ${fairState}</div><div class="hs-s-actions" style="margin-top:14px">${actionHtml}</div><div data-install-for="${esc(t.id)}"></div></article>`;
     }).join('')||'<div class="hs-s-card"><h3>No PasarGuard nodes found</h3><p>Add the node to PasarGuard first, then return here to enroll HS Node Bridge.</p></div>'}</div>`;
     const form=body.querySelector('[data-node-register]');
@@ -157,6 +158,11 @@
         await navigator.clipboard.writeText(command);
         e.currentTarget.textContent='Copied';
       };
+    });
+    body.querySelectorAll('[data-bridge-update]').forEach(button=>button.onclick=async()=>{
+      const id=button.dataset.bridgeUpdate;
+      const r=await action(button,()=>request(`/api/hs-services/targets/${id}/bridge-update`,{}));
+      if(r)button.textContent='Update queued';
     });
   }
   function certificates(body,data){
