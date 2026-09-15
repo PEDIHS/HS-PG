@@ -207,6 +207,32 @@ def test_expired_bootstrap_is_rejected(data):
     assert store.exchange_bootstrap('7', bootstrap) is None
 
 
+def test_bridge_update_is_fixed_atomic_and_remote_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent, "BRIDGE_ROOT", tmp_path)
+    (tmp_path / "hs_services.py").write_text("OLD = 1\n")
+    (tmp_path / "hs_services_agent.py").write_text("OLD = 2\n")
+    payloads={
+        "hs_services.py": b"VALUE = 11\n",
+        "hs_services_agent.py": b"VALUE = 22\n",
+    }
+    class Response:
+        def __init__(self,data): self.data=data
+        def __enter__(self): return self
+        def __exit__(self,*args): return False
+        def read(self,limit): return self.data[:limit]
+    def fake_open(url, timeout=30):
+        name=url.rsplit("/",1)[-1]
+        assert name in payloads and url.startswith(agent.BRIDGE_SOURCE + "/")
+        return Response(payloads[name])
+    monkeypatch.setattr(agent.urllib.request, "urlopen", fake_open)
+    result=agent.bridge_update()
+    assert result["updated"] is True and result["_restart_bridge"] is True
+    assert (tmp_path / "hs_services.py").read_text()=="VALUE = 11\n"
+    assert (tmp_path / "hs_services_agent.py").read_text()=="VALUE = 22\n"
+    with pytest.raises(ValueError, match="remote Node"):
+        agent.execute({"action":"bridge-update","resource":"bridge:self"})
+
+
 def test_bridge_inventory_reports_system_and_protocol(monkeypatch):
     monkeypatch.setattr(agent, 'cert_inventory', lambda: [])
     monkeypatch.setattr(agent, 'proxies', lambda: [])
