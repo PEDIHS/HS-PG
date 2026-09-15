@@ -93,6 +93,8 @@ def test_same_core_replicated_to_second_node_gets_same_manifest(database):
     assert second['rates'] == expected
     assert first['revision'] == second['revision']
     runtime = store.read('fair-runtime.json')
+    assert runtime['7']['targets'] == ['7', '8']
+    assert runtime['8']['targets'] == ['7', '8']
     assert runtime['7']['reached'] == {'1': ['1']}
     assert runtime['8']['reached'] == {'1': ['1']}
 
