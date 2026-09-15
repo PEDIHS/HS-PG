@@ -49,8 +49,12 @@ def api(tmp_path, monkeypatch):
             raise HTTPException(403, "Owner only")
         return Admin()
 
+    class FakeDB:
+        async def get(self, cls, identity):
+            return object() if identity == 7 else None
+
     async def get_db():
-        yield None
+        yield FakeDB()
 
     db = sys.modules["app.db"]
     db.get_db = get_db
@@ -73,6 +77,7 @@ def api(tmp_path, monkeypatch):
     spec.loader.exec_module(module)
     app = FastAPI()
     app.include_router(module.router)
+    app.state.hs_services_module = module
     return TestClient(app)
 
 
@@ -149,3 +154,57 @@ def test_renewal_deduplicates_and_hides_payload(api):
         headers={"Authorization": "Bearer owner"},
     )
     assert one.status_code == 200 and one.json()["id"] == two.json()["id"]
+
+
+def test_one_time_bridge_bootstrap_exchange(api):
+    owner = {'Authorization': 'Bearer owner'}
+    created = api.post('/api/hs-services/agents/7/bootstrap', headers=owner)
+    assert created.status_code == 200
+    bootstrap = created.json()['bootstrap_token']
+    exchange = api.post('/api/hs-services/agents/7/exchange', json={'bootstrap_token': bootstrap})
+    assert exchange.status_code == 200
+    token = exchange.json()['token']
+    assert store.authenticate('7', token)
+    replay = api.post('/api/hs-services/agents/7/exchange', json={'bootstrap_token': bootstrap})
+    assert replay.status_code == 401
+    missing = api.post('/api/hs-services/agents/8/exchange', json={'bootstrap_token': bootstrap})
+    assert missing.status_code == 404
+
+
+def test_node_bootstrap_rejects_unknown_core(api):
+    response = api.post(
+        "/api/hs-services/node-bootstrap",
+        json={"name":"Poland","address":"poland.example.com","core_id":8},
+        headers={"Authorization":"Bearer owner"},
+    )
+    assert response.status_code == 404
+
+
+def test_node_self_registration_is_one_time_and_hides_secrets(api, monkeypatch):
+    response = api.post(
+        "/api/hs-services/node-bootstrap",
+        json={"name":"Poland","address":"poland.example.com","core_id":7},
+        headers={"Authorization":"Bearer owner"},
+    )
+    assert response.status_code == 200
+    bootstrap = response.json()["bootstrap_token"]
+    module = api.app.state.hs_services_module
+    class FakeNode:
+        id=9; name="Poland"; address="poland.example.com"; port=62050; api_port=62051
+    async def fake_register(db, spec, body):
+        assert spec["name"] == "Poland"
+        assert body.api_key == "11111111-1111-4111-8111-111111111111"
+        return FakeNode()
+    monkeypatch.setattr(module, "_register_pasarguard_node", fake_register)
+    payload={
+        "bootstrap_token":bootstrap,
+        "api_key":"11111111-1111-4111-8111-111111111111",
+        "server_ca":"-----BEGIN CERTIFICATE-----\n" + "A"*80 + "\n-----END CERTIFICATE-----",
+    }
+    registered = api.post("/api/hs-services/node-register", json=payload)
+    assert registered.status_code == 200, registered.text
+    data=registered.json()
+    assert data["target"] == "9" and store.authenticate("9", data["token"])
+    assert payload["api_key"] not in registered.text and payload["server_ca"] not in registered.text
+    replay = api.post("/api/hs-services/node-register", json=payload)
+    assert replay.status_code == 401

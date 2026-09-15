@@ -9,11 +9,18 @@ import math
 
 
 def validate_policy(value):
-    threshold = value.get("threshold_bytes")
+    mode = value.get("mode", "threshold")
+    threshold = value.get("threshold_bytes", 0)
     percent = value.get("speed_percent")
     baseline = value.get("baseline_mbps")
-    if type(threshold) != int or threshold <= 0 or threshold > 2**53 - 1:
-        raise ValueError("Threshold must be a positive byte count")
+    if mode not in {"threshold", "always"}:
+        raise ValueError("Fair Use mode must be threshold or always")
+    if type(threshold) != int or threshold < 0 or threshold > 2**53 - 1:
+        raise ValueError("Threshold must be a non-negative byte count")
+    if mode == "threshold" and threshold <= 0:
+        raise ValueError("Threshold mode requires a positive byte count")
+    if mode == "always":
+        threshold = 0
     if (
         type(percent) not in (int, float)
         or not math.isfinite(percent)
@@ -27,11 +34,12 @@ def validate_policy(value):
     ):
         raise ValueError("A positive baseline Mbps is required to define a percentage")
     return dict(
+        mode=mode,
         threshold_bytes=threshold,
         speed_percent=float(percent),
         baseline_mbps=float(baseline),
         fair_limited=True,
-        usage_basis="current_cycle",
+        usage_basis="always" if mode == "always" else "current_cycle",
     )
 
 
@@ -44,7 +52,8 @@ def evaluate(user, policies, eligible_hosts, enforced=False):
     }
     consumed = max(0, int(user.get("used_traffic", 0)))
     reached = {
-        key: p for key, p in configured.items() if consumed >= p["threshold_bytes"]
+        key: p for key, p in configured.items()
+        if p.get("mode") == "always" or consumed >= p["threshold_bytes"]
     }
     limited = native == "active" and bool(reached)
     return dict(

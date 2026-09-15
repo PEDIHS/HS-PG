@@ -6,8 +6,10 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import argparse
 import json
 import os
+import platform
 import re
 import shutil
+import socket
 import ssl
 import subprocess
 import time
@@ -19,6 +21,7 @@ import hs_services as store
 LOCAL_CONFIG = Path("/etc/hs-pg/services.json")
 STATE = Path(os.getenv("HS_SERVICES_AGENT_DATA", "/var/lib/hs-pg-agent"))
 MT_BINARY = "/usr/local/bin/mtproto-proxy"
+BRIDGE_VERSION = "1.0.0"
 
 
 def run(args, timeout=30):
@@ -93,6 +96,53 @@ def proxies():
     return result
 
 
+def system_inventory():
+    mem = {}
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, value = line.split(":", 1)
+            mem[key] = int(value.strip().split()[0]) * 1024
+    except (OSError, ValueError):
+        pass
+    try:
+        uptime = float(Path("/proc/uptime").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        uptime = 0
+    try:
+        load1 = os.getloadavg()[0]
+    except OSError:
+        load1 = 0
+    disk = shutil.disk_usage("/")
+    return dict(
+        hostname=socket.gethostname(), kernel=platform.release(), os=platform.platform(),
+        uptime_seconds=int(uptime), cpu_cores=os.cpu_count() or 0, load1=load1,
+        memory_total=mem.get("MemTotal", 0), memory_available=mem.get("MemAvailable", 0),
+        disk_total=disk.total, disk_free=disk.free,
+    )
+
+
+def pasarguard_inventory():
+    result = dict(detected=False)
+    if not shutil.which("docker"):
+        return result
+    try:
+        rows = run(["docker", "ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}"], timeout=10).splitlines()
+        for row in rows:
+            parts = row.split("\t", 2)
+            if len(parts) != 3 or "pasarguard/node" not in parts[2]:
+                continue
+            result = dict(detected=True, container=parts[1], image=parts[2], running=True)
+            try:
+                version = run(["docker", "exec", parts[0], "/usr/local/bin/xray", "version"], timeout=10).splitlines()[0]
+                result["xray"] = version[:160]
+            except (RuntimeError, IndexError):
+                pass
+            break
+    except RuntimeError:
+        pass
+    return result
+
+
 def fair_ack():
     try:
         path=Path(local_config().get('fair_policy_file',str(STATE/'fair-policy.json')))
@@ -120,15 +170,20 @@ def apply_fair_manifest(value):
 
 
 def inventory():
+    fair = fair_ack()
     return dict(
         updated_at=time.time(),
+        bridge=dict(version=BRIDGE_VERSION, protocol="hs-bridge-v1", transport="outbound-https"),
+        system=system_inventory(),
+        pasarguard=pasarguard_inventory(),
         certificates=cert_inventory(),
-        fair_use=fair_ack(),
+        fair_use=fair,
         proxies=proxies(),
         capabilities=dict(
+            bridge=True,
             certbot=bool(shutil.which("certbot")),
             mtproxy=Path(MT_BINARY).is_file(),
-            fair_rate_limit=bool(fair_ack()),
+            fair_rate_limit=bool(fair),
         ),
     )
 

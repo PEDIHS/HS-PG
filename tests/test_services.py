@@ -188,3 +188,32 @@ def test_fair_agent_atomic_policy_and_core_ack(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         agent.apply_fair_manifest({'revision': 'b' * 64, 'rates': {'1\0paid': -10}})
     assert json.loads(file.read_text()) == manifest
+
+
+def test_bootstrap_is_one_time_hashed_and_rotates_agent(data):
+    bootstrap = store.issue_bootstrap('7', ttl=120)
+    assert bootstrap not in (data / 'enrollments.json').read_text()
+    token = store.exchange_bootstrap('7', bootstrap)
+    assert token and token not in (data / 'agents.json').read_text()
+    assert store.authenticate('7', token)
+    assert store.exchange_bootstrap('7', bootstrap) is None
+
+
+def test_expired_bootstrap_is_rejected(data):
+    bootstrap = store.issue_bootstrap('7', ttl=60)
+    records = store.read('enrollments.json')
+    records['7']['expires_at'] = 0
+    store.write('enrollments.json', records)
+    assert store.exchange_bootstrap('7', bootstrap) is None
+
+
+def test_bridge_inventory_reports_system_and_protocol(monkeypatch):
+    monkeypatch.setattr(agent, 'cert_inventory', lambda: [])
+    monkeypatch.setattr(agent, 'proxies', lambda: [])
+    monkeypatch.setattr(agent, 'fair_ack', lambda: {})
+    monkeypatch.setattr(agent, 'pasarguard_inventory', lambda: {'detected': True, 'container': 'node'})
+    report = agent.inventory()
+    assert report['bridge']['protocol'] == 'hs-bridge-v1'
+    assert report['capabilities']['bridge'] is True
+    assert report['pasarguard']['detected'] is True
+    assert report['system']['hostname']

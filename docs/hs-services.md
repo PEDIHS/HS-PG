@@ -24,7 +24,8 @@ sudo hs-pg restart
 | WARP | Nodes → Cores → Core → Outbounds → WARP / WireGuard HS |
 | WireGuard معمولی | فرم اصلی WireGuard در Outbounds خود پاسارگارد |
 | Telegram MTProxy | Nodes → Cores → Core → Inbounds → Telegram MTProxy HS |
-| Fair Use | Hosts → فرم ساخت/ویرایش Host → بخش بازشوندهٔ Fair Use HS |
+| Fair Use Host | Hosts → فرم ساخت/ویرایش Host → بخش Fair Use HS؛ ذخیره با Save اصلی Host |
+| Fair Use Group | Groups → فرم ساخت/ویرایش Group → بخش Fair Use HS؛ حالت Always یا After usage و ذخیره با Save اصلی Group |
 | Fair limited | نشان نارنجی در جدول کاربران و فیلتر کنار وضعیت‌ها |
 
 فرم WireGuard پاسارگارد دارای کلید، آدرس، peers، endpoint، MTU، reserved و تنظیمات مربوطه است. HS وارد کردن پروفایل WARP و مسیریابی انتخابی را به همان بخش Outbounds اضافه می‌کند. قبل از Apply باید تغییرات ذخیره‌نشدهٔ Core را ذخیره یا لغو کنید. پس از اعمال موفق، ویرایشگر بارگذاری مجدد می‌شود تا پیش‌نویس قدیمی روی تنظیمات تازه نوشته نشود. ثبت حساب WARP خودکار نیست.
@@ -41,13 +42,9 @@ MTProxy مانند قرارگیری MTProto در ثنایی در بخش Inbounds
 {"certbot_config_dir":"/etc/letsencrypt","reload_units":{"example.com":"nginx.service"}}
 ```
 
-توکن هر نود از Certificates → Server connections تولید می‌شود. آن را در فایل با دسترسی 600 ذخیره و اسکریپت همین نسخه را روی نود اجرا کنید:
+برای اتصال نود از **HS Plugin → Node Bridge** استفاده کنید. پنل یک bootstrap یک‌بارمصرف با عمر کوتاه می‌دهد و دستور نصب را می‌سازد. نود موجود با Node ID ثبت می‌شود و نود تازه در حالت `auto` اطلاعات لازم PasarGuard Node را محلی می‌خواند و بدون نمایش API key در UI آن را مستقیم از نود به پنل می‌فرستد.
 
-```bash
-sudo bash /path/to/install-node-agent.sh https://panel.example.com NODE_ID /path/to/token-file
-```
-
-هنگام به‌روزرسانی Agent نود، قوانین Fair Use قدیمی مبتنی بر حذف بسته نیز پاک می‌شوند. کلید خصوصی گواهی به پنل ارسال نمی‌شود.
+bootstrap بعد از مصرف قابل استفادهٔ مجدد نیست و در state فقط hash آن نگهداری می‌شود. توکن بلندمدت Bridge با دسترسی `0600` روی نود ذخیره می‌شود و ارتباط مدیریتی HS به‌صورت outbound HTTPS از نود به پنل است. کلید خصوصی گواهی به پنل ارسال نمی‌شود؛ فقط certificate عمومی برای inventory و ثبت Node استفاده می‌شود. هنگام نصب Bridge، قوانین Fair Use قدیمی مبتنی بر حذف بسته نیز پاک می‌شوند.
 
 ## Fair Use واقعی
 
@@ -65,7 +62,7 @@ sudo /opt/hs-pg/plugin/build-fair-core.sh /path/to/Xray-core /opt/hs-pg/xray-hs-
 
 Agent هر ده ثانیه سیاست را هماهنگ می‌کند و هسته هر ثانیه آن را می‌خواند. Agent طی تمدید طولانی Certbot نیز این هماهنگی را ادامه می‌دهد. آستانه با تأخیر آمارگیری خود پاسارگارد و این همگام‌سازی اعمال می‌شود. نشان Fair limited فقط وقتی فعال می‌شود که هستهٔ نود revision درست را تأیید کرده باشد. بدون ACK، ذخیرهٔ سیاست به‌عنوان کاهش سرعت موفق نمایش داده نمی‌شود.
 
-سیاست نیازمند inbound یکتا از نوع VLESS، VMess، Trojan، Shadowsocks، SOCKS یا HTTP و یک نود مشخص برای بودجهٔ مشترک است. هر Host باید inbound اختصاصی داشته باشد؛ اگر Host دیگری با آن inbound ساخته شود، محدودیت آن غیرفعال می‌شود تا Host دیگر ناخواسته محدود نشود. WireGuard native و هسته‌های غیر Xray مشمول این adapter نیستند. وضعیت‌های expired، limited، disabled و on_hold اولویت دارند. وضعیت دیتابیس اصلی تغییر نمی‌کند؛ `hs_status` وضعیت مشتق‌شده را در API برمی‌گرداند و فیلتر سرور قبل از pagination اعمال می‌شود.
+Policy Host در سطح inbound اعمال می‌شود. اگر چند Host یک `inbound_tag` مشترک داشته باشند، تغییر یا حذف Fair Use روی یکی روی همهٔ Hostهای همان inbound همگام می‌شود. در Group، حالت `Always` از ابتدا cap را روی کاربران و inboundهای Group اعمال می‌کند و `After usage` بعد از threshold مصرف همان کاربر فعال می‌شود. در هم‌پوشانی Host و Group، محدودکننده‌ترین cap فعال برنده است. روی Coreهای replica، همهٔ Nodeها باید revision یکسان را ACK کنند تا وضعیت `Fair limited` اعمال‌شده تلقی شود. WireGuard native و هسته‌های غیر Xray مشمول این adapter نیستند. وضعیت‌های expired، limited، disabled و on_hold اولویت دارند و وضعیت دیتابیس اصلی تغییر نمی‌کند.
 
 ## اعتبارسنجی
 

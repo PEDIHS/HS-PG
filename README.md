@@ -52,7 +52,7 @@ PasarGuard روی Node یک `core_config_id` دارد. HS Plugin ابتدا Core
 
 ### نکته مهم درباره Hostهای دارای Inbound مشترک
 
-Xray/PasارGuard در آمار فعلی، traffic کاربر را به شکل `user` ثبت می‌کند و Host address/SNI را در آمار user نگه نمی‌دارد. بنابراین دو Host که دقیقاً یک `inbound_tag` دارند از نظر accounting قابل تفکیک قطعی نیستند. HS Plugin برای جلوگیری از حساب اشتباه، **همه Hostهای دارای یک inbound مشترک را با یک Ratio/offset مشترک** مدیریت می‌کند.
+Xray/PasarGuard در آمار فعلی، traffic کاربر را به شکل `user` ثبت می‌کند و Host address/SNI را در آمار user نگه نمی‌دارد. بنابراین دو Host که دقیقاً یک `inbound_tag` دارند از نظر accounting قابل تفکیک قطعی نیستند. HS Plugin برای جلوگیری از حساب اشتباه، **همه Hostهای دارای یک inbound مشترک را با یک Ratio/offset مشترک** مدیریت می‌کند.
 
 برای Hostهایی که inbound مستقل دارند، attribution مستقل است. افزونه برای این کار شناسه‌های آماری داخلی per-inbound می‌سازد، در زمان ثبت usage آن‌ها را دوباره به User ID اصلی برمی‌گرداند و Online/IP stats را نیز روی شناسه اصلی + aliasهای داخلی تجمیع می‌کند.
 
