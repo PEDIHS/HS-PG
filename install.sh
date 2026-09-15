@@ -96,10 +96,15 @@ python3 -m py_compile \
   "$TMP/backend/hs_services_agent.py" \
   "$TMP/backend/hs_outbounds.py" \
   "$TMP/backend/hs_fair_use.py" \
+  "$TMP/backend/hs_fair_runtime.py" \
+  "$TMP/plugin/patch_services_api.py" \
+  "$TMP/plugin/retire_legacy.py" \
+  "$TMP/plugin/patch_fair_core.py" \
   || fail "Python validation failed"
 
 if command -v node >/dev/null 2>&1; then
   node --check "$TMP/plugin/hs-services.js" || fail "hs-services.js validation failed"
+  node --check "$TMP/plugin/hs-host-fair.js" || fail "hs-host-fair.js validation failed"
   node --check "$TMP/plugin/hs-plugin.js" || fail "hs-plugin.js validation failed"
   node --check "$TMP/plugin/hs-tab-fix.js" || fail "hs-tab-fix.js validation failed"
   node --check "$TMP/plugin/hs-node-pro.js" || fail "hs-node-pro.js validation failed"
@@ -107,7 +112,9 @@ if command -v node >/dev/null 2>&1; then
   node --check "$TMP/plugin/hs-backup-tab-watchdog.js" || fail "hs-backup-tab-watchdog.js validation failed"
   node --check "$TMP/plugin/hs-admin-time.js" || fail "hs-admin-time.js validation failed"
 fi
-bash -n "$TMP/plugin/integrate-dashboard.sh" "$TMP/plugin/integrate-shield.sh" "$TMP/cli/hs-pg" || fail "Shell validation failed"
+for file in "$TMP/plugin/"*.sh "$TMP/cli/hs-pg"; do
+  bash -n "$file" || fail "Shell validation failed: $file"
+done
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl stop hs-pg-integrator.timer hs-pg-integrator.path hs-pg-integrator.service hs-services-agent.service >/dev/null 2>&1 || true

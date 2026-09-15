@@ -52,6 +52,13 @@ def transfer(proxy_port, http_port, user, upload=False):
         response = bytearray()
         while chunk := conn.recv(65536):
             response.extend(chunk)
+            # VLESS may keep the duplex connection open after the HTTP body.
+            # Measure the completed transfer, independently of its idle timeout.
+            if b'\r\n\r\n' in response[2:]:
+                http_headers, received = response[2:].split(b'\r\n\r\n', 1)
+                length = next(int(line.split(b':', 1)[1]) for line in http_headers.split(b'\r\n') if line.lower().startswith(b'content-length:'))
+                if len(received) >= length:
+                    break
         assert response[:2] == b'\0\0', response[:40]
         body = response[2:].split(b'\r\n\r\n', 1)[1]
         assert body == (b'ok' if upload else b'x' * SIZE)

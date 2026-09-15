@@ -148,3 +148,43 @@ def test_agent_rejects_arbitrary_job_and_proxy_paths():
         agent.execute(dict(action="shell", resource="anything"))
     with pytest.raises(ValueError):
         agent.proxy_action("../../etc/passwd", "delete")
+
+
+def test_inventory_only_lists_certbot_and_requires_renewal_config(tmp_path, monkeypatch):
+    root = tmp_path / 'letsencrypt'
+    for name in ('example.com', 'orphan.example'):
+        file = root / 'live' / name / 'fullchain.pem'
+        file.parent.mkdir(parents=True)
+        file.write_text('test certificate')
+    (root / 'renewal').mkdir()
+    (root / 'renewal' / 'example.com.conf').write_text('renewal configuration')
+    trust = tmp_path / 'node-trust.pem'
+    trust.write_text('long-lived internal certificate')
+    monkeypatch.setattr(agent, 'local_config', lambda: {'certbot_config_dir': str(root), 'certificates': [{'path': str(trust)}]})
+    monkeypatch.setattr(agent.shutil, 'which', lambda _: '/usr/bin/certbot')
+    monkeypatch.setattr(agent.ssl._ssl, '_test_decode_cert', lambda _: {
+        'notBefore': 'Sep  1 00:00:00 2026 GMT', 'notAfter': 'Nov 30 00:00:00 2026 GMT',
+        'subjectAltName': [('DNS', 'example.com')],
+    })
+    certificates = {c['id']: c for c in agent.cert_inventory()}
+    assert set(certificates) == {'example.com', 'orphan.example'}
+    assert certificates['example.com']['renewable']
+    assert not certificates['orphan.example']['renewable']
+    assert all(c['provider'] == 'certbot' for c in certificates.values())
+
+
+def test_fair_agent_atomic_policy_and_core_ack(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent, 'STATE', tmp_path)
+    monkeypatch.setattr(agent, 'local_config', lambda: {})
+    manifest = {'revision': 'a' * 64, 'rates': {'1\0paid': 2500000}}
+    agent.apply_fair_manifest(manifest)
+    file = tmp_path / 'fair-policy.json'
+    assert json.loads(file.read_text()) == manifest
+    assert file.stat().st_mode & 0o777 == 0o600
+    assert agent.fair_ack() == {}  # Writing a policy is not enforcement.
+    ack = {'adapter': 'hs-rate-v1', 'revision': 'a' * 64, 'updated_at': time.time()}
+    (tmp_path / 'fair-policy.json.ack').write_text(json.dumps(ack))
+    assert agent.fair_ack() == ack
+    with pytest.raises(ValueError):
+        agent.apply_fair_manifest({'revision': 'b' * 64, 'rates': {'1\0paid': -10}})
+    assert json.loads(file.read_text()) == manifest

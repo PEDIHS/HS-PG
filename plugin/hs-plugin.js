@@ -406,7 +406,6 @@
     }
 
     window.HSServices?.close?.();
-    if(window.HSShieldDebug?.close)window.HSShieldDebug.close();
     currentSection='features';
     active=true;
     updateNavActive();

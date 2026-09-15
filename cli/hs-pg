@@ -14,10 +14,12 @@ rearm_guard(){
 
 case "$cmd" in
   apply|integrate)
-    exec "$ROOT/plugin/integrate-dashboard.sh"
+    "$ROOT/plugin/integrate-dashboard.sh"
+    exec "$ROOT/plugin/integrate-services.sh"
     ;;
   restart|restart-backend)
     "$ROOT/plugin/integrate-dashboard.sh"
+    "$ROOT/plugin/integrate-services.sh"
     if command -v pasarguard >/dev/null 2>&1; then
       echo "[HS Plugin] restarting PasarGuard through the official CLI"
       pasarguard restart
