@@ -44,6 +44,7 @@ files=(
   plugin/retire_legacy.py
   plugin/patch_services_api.py
   plugin/integrate-services.sh
+  plugin/integrate-guard.sh
   plugin/install-node-agent.sh
   plugin/install-node-bridge.sh
   plugin/install-mtproxy.sh
@@ -130,7 +131,7 @@ bash "$TMP/plugin/retire-firewall.sh"
 mkdir -p "$ROOT/backend" "$ROOT/plugin" "$ROOT/cli" "$ROOT/systemd" "$DATA"
 mkdir -p "$ROOT/core/hsfair"
 install -m 0644 "$TMP/core/hsfair/"*.go "$ROOT/core/hsfair/"
-for file in build-fair-core.sh patch_fair_core.py retire-firewall.sh retire_legacy.py patch_services_api.py integrate-services.sh; do
+for file in build-fair-core.sh patch_fair_core.py retire-firewall.sh retire_legacy.py patch_services_api.py integrate-services.sh integrate-guard.sh; do
   install -m 0755 "$TMP/plugin/$file" "$ROOT/plugin/$file"
 done
 install -m 0755 "$TMP/plugin/install-node-agent.sh" "$ROOT/plugin/install-node-agent.sh"
@@ -188,6 +189,10 @@ mkdir -p "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/a
 chmod 700 "$DATA/backup-inbox" "$DATA/backup-outbox" "$DATA/backup-jobs" "$DATA/admin-time" || true
 
 if command -v systemctl >/dev/null 2>&1; then
+  # Retire the legacy Zomorod 10-second full-dashboard polling guard. HS now owns
+  # persistence through the hash-driven timer/path integrator and still applies
+  # Zomorod integration when a real source/container change is detected.
+  systemctl disable --now zomorod-integrator.timer zomorod-integrator.path zomorod-integrator.service >/dev/null 2>&1 || true
   for unit in hs-pg-integrator.service hs-pg-integrator.timer hs-pg-integrator.path hs-pg-backup-agent.service hs-services-agent.service; do
     install -m 0644 "$TMP/systemd/$unit" "/etc/systemd/system/$unit"
   done

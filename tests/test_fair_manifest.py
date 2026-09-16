@@ -172,3 +172,13 @@ def test_host_and_group_overlap_uses_strictest_cap(database):
     assert result['rates']['2\0paid']==1_250_000
     reached=store.read('fair-runtime.json')['7']['reached']
     assert reached['1']==['g:1','i:1:paid'] and reached['2']==['g:1']
+
+
+def test_enabled_reads_state_without_importing_router(tmp_path, monkeypatch):
+    state = tmp_path / 'state.json'
+    state.write_text('{"features":{"fair_use":{"enabled":true}}}')
+    monkeypatch.setattr(fair, 'STATE_FILE', state)
+    monkeypatch.delitem(sys.modules, 'app.routers.hs_plugin_api', raising=False)
+    fair._cache.clear()
+    assert fair.enabled() is True
+    assert 'app.routers.hs_plugin_api' not in sys.modules
