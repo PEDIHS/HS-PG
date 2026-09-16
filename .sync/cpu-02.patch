@@ -1,0 +1,140 @@
++++ b/plugin/integrate-guard.sh
+@@ -0,0 +1,37 @@
++#!/usr/bin/env bash
++set -Eeuo pipefail
++export LC_ALL=C
++LOCK=/run/hs-pg-integrator.lock
++STATE=/var/lib/pasarguard/hs-plugin/integrator.state
++exec 9>"$LOCK"
++flock -n 9 || exit 0
++mkdir -p "$(dirname "$STATE")"
++
++source_rev(){
++  find /opt/hs-pg/backend /opt/hs-pg/plugin /opt/zomorod/backend /opt/zomorod/plugin \
++    -maxdepth 2 -type f \( -name '*.py' -o -name '*.js' -o -name '*.sh' \) \
++    ! -name 'integrate-guard.sh' -print0 2>/dev/null \
++    | sort -z | xargs -0 -r sha256sum | sha256sum | awk '{print $1}'
++}
++
++cid="$(docker ps --filter ancestor=pasarguard/panel:latest -q 2>/dev/null | head -1 || true)"
++rev="$(source_rev)"
++prev_cid=''; prev_rev=''
++[[ -f "$STATE" ]] && read -r prev_cid prev_rev < "$STATE" || true
++
++# Container identity + source tree digest are enough for the frequent health check.
++# A recreated container changes CID; any deploy changes rev. This avoids dozens of
++# docker exec/compose processes when nothing changed.
++if [[ -n "$cid" && "$cid" == "$prev_cid" && "$rev" == "$prev_rev" ]]; then
++  echo '[HS Integrator] unchanged; skipping reconcile'
++  exit 0
++fi
++
++echo '[HS Integrator] change detected; running reconcile'
++/bin/bash /opt/hs-pg/plugin/integrate-dashboard.sh
++/bin/bash /opt/hs-pg/plugin/integrate-services.sh
++[[ ! -x /opt/zomorod/plugin/integrate-dashboard.sh ]] || /bin/bash /opt/zomorod/plugin/integrate-dashboard.sh
++cid="$(docker ps --filter ancestor=pasarguard/panel:latest -q 2>/dev/null | head -1 || true)"
++printf '%s %s\n' "$cid" "$(source_rev)" > "$STATE"
++chmod 600 "$STATE"
++echo '[HS Integrator] reconcile complete'
+diff --git a/systemd/hs-pg-integrator.service b/systemd/hs-pg-integrator.service
+index 7b8a016..21acb5b 100644
+--- a/systemd/hs-pg-integrator.service
++++ b/systemd/hs-pg-integrator.service
+@@ -4,9 +4,7 @@ After=docker.service network-online.target
+ Wants=network-online.target
+ [Service]
+ Type=oneshot
+-ExecStart=/bin/bash /opt/hs-pg/plugin/integrate-dashboard.sh
+-ExecStart=/bin/bash /opt/hs-pg/plugin/integrate-services.sh
+-ExecStart=/bin/bash -c 'if [ -x /opt/zomorod/plugin/integrate-dashboard.sh ]; then /opt/zomorod/plugin/integrate-dashboard.sh; fi'
++ExecStart=/bin/bash /opt/hs-pg/plugin/integrate-guard.sh
+ TimeoutStartSec=180
+ Nice=10
+ User=root
+diff --git a/tests/test_fair_manifest.py b/tests/test_fair_manifest.py
+index a97234e..6ff830d 100644
+--- a/tests/test_fair_manifest.py
++++ b/tests/test_fair_manifest.py
+@@ -172,3 +172,13 @@ def test_host_and_group_overlap_uses_strictest_cap(database):
+     assert result['rates']['2\0paid']==1_250_000
+     reached=store.read('fair-runtime.json')['7']['reached']
+     assert reached['1']==['g:1','i:1:paid'] and reached['2']==['g:1']
++
++
++def test_enabled_reads_state_without_importing_router(tmp_path, monkeypatch):
++    state = tmp_path / 'state.json'
++    state.write_text('{"features":{"fair_use":{"enabled":true}}}')
++    monkeypatch.setattr(fair, 'STATE_FILE', state)
++    monkeypatch.delitem(sys.modules, 'app.routers.hs_plugin_api', raising=False)
++    fair._cache.clear()
++    assert fair.enabled() is True
++    assert 'app.routers.hs_plugin_api' not in sys.modules
+diff --git a/tests/test_services.py b/tests/test_services.py
+index 4217170..0e8c16d 100644
+--- a/tests/test_services.py
++++ b/tests/test_services.py
+@@ -290,3 +290,62 @@ def test_local_manifests_write_each_node_policy_file(tmp_path, monkeypatch):
+     ])
+     assert json.loads((one/'hs'/'fair-policy.json').read_text()) == a
+     assert json.loads((two/'hs'/'fair-policy.json').read_text()) == b
++
++
++def test_node_inventory_caches_static_docker_metadata_but_refreshes_ack(tmp_path, monkeypatch):
++    source = tmp_path / 'node'
++    (source / 'hs').mkdir(parents=True)
++    ack_file = source / 'hs' / 'fair-policy.json.ack'
++    ack_file.write_text(json.dumps({'adapter':'hs-rate-v1','revision':'a'*64,'updated_at':time.time()}))
++    calls = {'ps':0,'inspect':0,'version':0}
++    def fake_run(args, timeout=30):
++        if args[:3] == ['docker','ps','--format']:
++            calls['ps'] += 1
++            return 'c1\tnode\tpasarguard/node:latest\n'
++        if args[:2] == ['docker','inspect']:
++            calls['inspect'] += 1
++            return json.dumps([{'Config':{'Env':['SERVICE_PORT=62050','API_PORT=62051','XRAY_EXECUTABLE_PATH=/var/lib/xray-hs-fair','HS_FAIR_POLICY_FILE=/var/lib/hs/fair-policy.json']},'Mounts':[{'Source':str(source),'Destination':'/var/lib/node'}]}])
++        if args[:2] == ['docker','exec']:
++            calls['version'] += 1
++            return 'Xray 26.3.27\n'
++        raise AssertionError(args)
++    monkeypatch.setattr(agent.shutil,'which',lambda name: '/usr/bin/docker' if name=='docker' else None)
++    monkeypatch.setattr(agent,'run',fake_run)
++    agent._PG_NODE_CACHE.update(at=0.0, rows=[])
++    first = agent.pasarguard_nodes_inventory()
++    ack_file.write_text(json.dumps({'adapter':'hs-rate-v1','revision':'b'*64,'updated_at':time.time()}))
++    second = agent.pasarguard_nodes_inventory()
++    assert calls == {'ps':1,'inspect':1,'version':1}
++    assert first[0]['fair_use']['revision'] == 'a'*64
++    assert second[0]['fair_use']['revision'] == 'b'*64
++
++
++def test_local_panel_reuses_persistent_bridge_process(monkeypatch):
++    class Out:
++        def __init__(self): self.lines=[]
++        def readline(self): return self.lines.pop(0) if self.lines else ''
++    class In:
++        def __init__(self, out): self.out=out; self.pending=''
++        def write(self, value): self.pending += value; return len(value)
++        def flush(self):
++            request=json.loads(self.pending.strip()); self.pending=''
++            self.out.lines.append(json.dumps({'ok':True,'result':{'action':request['action']}})+'\n')
++    class Proc:
++        def __init__(self): self.stdout=Out(); self.stdin=In(self.stdout); self.returncode=None
++        def poll(self): return self.returncode
++        def terminate(self): self.returncode=0
++        def wait(self, timeout=None): return self.returncode
++        def kill(self): self.returncode=-9
++    created=[]
++    def fake_popen(*args, **kwargs):
++        proc=Proc(); created.append(proc); return proc
++    monkeypatch.setattr(agent,'panel_container',lambda:'panel-cid')
++    monkeypatch.setattr(agent.subprocess,'Popen',fake_popen)
++    monkeypatch.setattr(agent.select,'select',lambda read,write,error,timeout:(read,[],[]))
++    agent._close_local_bridge()
++    try:
++        assert agent.local_panel('poll', {'n':1}) == {'action':'poll'}
++        assert agent.local_panel('poll', {'n':2}) == {'action':'poll'}
++        assert len(created) == 1
++    finally:
++        agent._close_local_bridge()
+-- 
