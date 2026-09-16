@@ -8,7 +8,7 @@ const {chromium}=require('playwright'),fs=require('fs'),path=require('path'),ass
     const u=new URL(route.request().url()); let data={};
     if(u.pathname==='/api/hs-plugin/state') data={features:{node_pro:{enabled:true}}};
     else if(u.pathname==='/api/nodes'){nodeRequests++;data={nodes:[{id:7,name:'TR',address:'1.2.3.4',port:62050}]};}
-    else if(u.pathname==='/api/nodes/realtime_stats'){statsRequests++;data={'7':{mem_total:4101693440,mem_used:1460288880,cpu_cores:2,cpu_usage:32,incoming_bandwidth_speed:5600000,outgoing_bandwidth_speed:1100000,uptime:5000}};}
+    else if(u.pathname==='/api/nodes/realtime_stats'){statsRequests++;const tick=statsRequests;data={'7':{mem_total:4101693440,mem_used:1460288880,cpu_cores:2,cpu_usage:tick===1?32:38,incoming_bandwidth_speed:5600000+(tick-1)*100000,outgoing_bandwidth_speed:1100000+(tick-1)*50000,uptime:5000}};}
     else return route.fulfill({contentType:'text/html',body:'<!doctype html><html><head><style>*{box-sizing:border-box}body{margin:20px;background:#08090c;font-family:Arial}.relative{position:relative}.overflow-hidden{overflow:hidden}.border{border:1px solid #333}.rounded-lg{border-radius:12px}.p-3{padding:12px}.min-w-0{min-width:0}.flex-1{flex:1}.flex{display:flex}.items-start{align-items:flex-start}.justify-between{justify-content:space-between}.gap-2{gap:8px}.gap-3{gap:12px}.mb-2{margin-bottom:8px}.space-y-1{display:block}#card{width:420px;background:#111;color:#eee;--card:#111;--border:#333;--foreground:#eee;--muted:#20242a;--muted-foreground:#9aa4b2;--primary:#fff}</style></head><body><div id="card" class="group relative h-full overflow-hidden border rounded-lg"><div class="flex items-start gap-3 p-3"><div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-2"><div class="min-w-0 flex-1"><div class="mb-0.5 flex items-center gap-1.5"><div class="h-2 w-2 shrink-0 rounded-full bg-green-500"></div><h3>TR</h3></div></div><button aria-haspopup="menu">⋮</button></div><div class="mb-2 space-y-1.5"><div><span dir="ltr">1.2.3.4:62050</span></div><div><span>26.3.27</span><span>0.5.4</span></div></div><div class="separator"></div><div class="min-w-0 space-y-1 overflow-x-hidden"><div class="flex"><span>3.06 TB</span><span class="text-blue-500">248.79 GB</span><span class="text-emerald-500">2.82 TB</span></div></div></div></div></div></body></html>'});
     await route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
   });
@@ -20,7 +20,7 @@ const {chromium}=require('playwright'),fs=require('fs'),path=require('path'),ass
   assert.match(await rx.innerText(),/RECEIVE[\s\S]*42\.7[\s\S]*Mbps/);
   assert.match(await tx.innerText(),/SEND[\s\S]*8\.4[\s\S]*Mbps/);
   assert.equal(await rx.locator('svg').count(),1); assert.equal(await tx.locator('svg').count(),1);
-  const geometry=await block.evaluate(el=>{const rx=el.querySelector('[data-hs-network=\"rx\"]'),shell=el.querySelector('.hs-node-pro-live-shell'),network=el.querySelector('.hs-node-pro-network'),card=el.closest('.hs-node-pro-card'),name=card?.querySelector('h3'),head=el.querySelector('.hs-node-pro-live-head'),realtime=el.querySelector('.hs-node-pro-realtime'),metric=el.querySelector('.hs-node-pro-metric'),spark=metric?.querySelector('.hs-node-pro-spark'),percent=metric?.querySelector('.hs-node-pro-percent');const cs=e=>e?getComputedStyle(e):null,rect=e=>e?.getBoundingClientRect();const hr=rect(head),rr=rect(realtime),sr=rect(spark),pr=rect(percent);return{rx:rx?.getBoundingClientRect().height||0,block:el.getBoundingClientRect().height,shellRadius:parseFloat(cs(shell)?.borderRadius||'0'),cardRadius:parseFloat(cs(card)?.borderRadius||'0'),columns:cs(network)?.gridTemplateColumns||'',nameColor:cs(name)?.color||'',cardBg:cs(card)?.backgroundImage||'',realtimeCenterDelta:hr&&rr?Math.abs((hr.top+hr.height/2)-(rr.top+rr.height/2)):999,realtimeHeight:rr?.height||0,sparkPercentGap:sr&&pr?pr.left-sr.right:-999};});
+  const geometry=await block.evaluate(el=>{const rx=el.querySelector('[data-hs-network=\"rx\"]'),shell=el.querySelector('.hs-node-pro-live-shell'),network=el.querySelector('.hs-node-pro-network'),card=el.closest('.hs-node-pro-card'),name=card?.querySelector('h3'),head=el.querySelector('.hs-node-pro-live-head'),realtime=el.querySelector('.hs-node-pro-realtime'),realtimeText=realtime?.querySelector('span'),metric=el.querySelector('.hs-node-pro-metric'),spark=metric?.querySelector('.hs-node-pro-spark'),percent=metric?.querySelector('.hs-node-pro-percent'),sparkPath=metric?.querySelector('.hs-node-pro-spark path');const cs=e=>e?getComputedStyle(e):null,rect=e=>e?.getBoundingClientRect();const hr=rect(head),rr=rect(realtime),tr=rect(realtimeText),sr=rect(spark),pr=rect(percent);return{rx:rx?.getBoundingClientRect().height||0,block:el.getBoundingClientRect().height,shellRadius:parseFloat(cs(shell)?.borderRadius||'0'),cardRadius:parseFloat(cs(card)?.borderRadius||'0'),columns:cs(network)?.gridTemplateColumns||'',nameColor:cs(name)?.color||'',cardBg:cs(card)?.backgroundImage||'',realtimeCenterDelta:hr&&rr?Math.abs((hr.top+hr.height/2)-(rr.top+rr.height/2)):999,realtimeHorizontalDelta:hr&&rr?Math.abs((hr.left+hr.width/2)-(rr.left+rr.width/2)):999,realtimeTextCenterDelta:rr&&tr?Math.abs((rr.top+rr.height/2)-(tr.top+tr.height/2)):999,realtimeHeight:rr?.height||0,sparkPercentGap:sr&&pr?pr.left-sr.right:-999,shellBackdrop:cs(shell)?.backdropFilter||'none',sparkFilter:cs(sparkPath)?.filter||'none'};});
   assert(geometry.rx>=76&&geometry.rx<=86,`reference live metric height mismatch: ${geometry.rx}`);
   assert(geometry.block>0&&geometry.block<=205,`Node PRO block too tall: ${geometry.block}`);
   assert(geometry.shellRadius>=16,`live glass radius too small: ${geometry.shellRadius}`);
@@ -28,13 +28,20 @@ const {chromium}=require('playwright'),fs=require('fs'),path=require('path'),ass
   assert(geometry.columns.split(' ').length>=2,`live network is not two-column: ${geometry.columns}`);
   assert(geometry.realtimeHeight===16,`REALTIME badge height mismatch: ${geometry.realtimeHeight}`);
   assert(geometry.realtimeCenterDelta<=0.5,`REALTIME badge is not vertically centered: ${geometry.realtimeCenterDelta}`);
-  assert(geometry.sparkPercentGap>=4,`CPU/RAM sparkline overlaps percentage safe-zone: ${geometry.sparkPercentGap}`);
+  assert(geometry.realtimeHorizontalDelta<=0.5,`REALTIME badge is not horizontally centered: ${geometry.realtimeHorizontalDelta}`);
+  assert(geometry.realtimeTextCenterDelta<=0.75,`REALTIME text is not optically centered: ${geometry.realtimeTextCenterDelta}`);
+  assert(geometry.sparkPercentGap>=12,`CPU/RAM sparkline overlaps percentage safe-zone: ${geometry.sparkPercentGap}`);
+  assert.equal(geometry.shellBackdrop,'none','nested live shell backdrop blur should stay disabled');
+  assert.equal(geometry.sparkFilter,'none','sparkline GPU filter should stay disabled');
   assert.equal(geometry.nameColor,'rgb(235, 204, 99)');
   assert(geometry.cardBg.includes('linear-gradient'),'outer card must use liquid-glass gradient');
   assert((await block.innerText()).includes('LIVE NETWORK')); assert((await block.innerText()).includes('REALTIME'));
   assert(await page.locator('#card').evaluate(el=>el.classList.contains('hs-node-pro-card')));
+  await page.locator('[data-hs-resource="cpu"] .hs-node-pro-spark path').evaluate(el=>el.dataset.renderIdentity='keep');
   await page.waitForTimeout(2200);
   assert(statsRequests>=2,`expected realtime refresh, got ${statsRequests}`);
+  assert.equal(await page.locator('[data-hs-resource="cpu"] .hs-node-pro-spark path').getAttribute('data-render-identity'),'keep','realtime refresh must update in place instead of remounting chart DOM');
+  assert.match(await page.locator('[data-hs-field="cpu-percent"]').innerText(),/38%/);
   assert.equal(nodeRequests,1,'node inventory must stay cached while realtime stats refresh');
   assert.deepEqual(errors,[]);
   console.log('Node PRO reference-style liquid-glass card regression passed');
