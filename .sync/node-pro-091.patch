@@ -1,0 +1,107 @@
+diff --git a/plugin/hs-node-pro.js b/plugin/hs-node-pro.js
+index bd65217..f9ee1c9 100644
+--- a/plugin/hs-node-pro.js
++++ b/plugin/hs-node-pro.js
+@@ -1,7 +1,7 @@
+ (() => {
+   'use strict';
+ 
+-  const VERSION = '0.9.0';
++  const VERSION = '0.9.1';
+   const STYLE_ID = 'hs-node-pro-style';
+   const BLOCK_CLASS = 'hs-node-pro';
+   const CARD_CLASS = 'hs-node-pro-card';
+@@ -136,7 +136,8 @@
+       align-items:center;
+       justify-content:space-between;
+       gap:10px;
+-      margin-bottom:9px;
++      min-height:16px;
++      margin-bottom:7px;
+       padding:0 2px;
+     }
+     .${BLOCK_CLASS}-live-title{
+@@ -149,7 +150,23 @@
+       font-weight:750;
+       letter-spacing:.65px;
+     }
+-    .${BLOCK_CLASS}-realtime{color:rgba(255,255,255,.28);font-size:8.5px;font-weight:600;letter-spacing:.45px}
++    .${BLOCK_CLASS}-realtime{
++      display:inline-flex;
++      align-items:center;
++      justify-content:center;
++      min-width:52px;
++      height:16px;
++      padding:0 7px;
++      border:1px solid rgba(255,255,255,.055);
++      border-radius:999px;
++      background:rgba(255,255,255,.025);
++      color:rgba(255,255,255,.30);
++      font-size:8.5px;
++      line-height:1;
++      font-weight:650;
++      letter-spacing:.45px;
++      text-align:center;
++    }
+     .${BLOCK_CLASS}-live-dot{
+       width:6px;
+       height:6px;
+@@ -292,15 +309,16 @@
+       text-align:right;
+     }
+     .${BLOCK_CLASS}-chart-row{position:absolute;inset:24px 10px 6px 10px;z-index:1}
+-    .${BLOCK_CLASS}-spark{position:absolute;inset:auto 0 0 0;height:29px;overflow:hidden;opacity:.72}
++    .${BLOCK_CLASS}-spark{position:absolute;left:0;right:46px;bottom:0;height:29px;overflow:hidden;opacity:.72}
+     .${BLOCK_CLASS}-spark svg{display:block;width:100%;height:100%;overflow:visible}
+     .${BLOCK_CLASS}-spark path{fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+     .${BLOCK_CLASS}-spark.green path{stroke:#3bf0ae;filter:drop-shadow(0 0 3px rgba(59,240,174,.22))}
+     .${BLOCK_CLASS}-spark.purple path{stroke:#9884ff;filter:drop-shadow(0 0 3px rgba(152,132,255,.22))}
+     .${BLOCK_CLASS}-percent{
+       position:absolute;
+-      right:1px;
+-      top:3px;
++      right:0;
++      top:2px;
++      min-width:40px;
+       z-index:3;
+       color:#f4f7fa;
+       font-size:15px;
+@@ -310,6 +328,7 @@
+       text-align:right;
+       white-space:nowrap;
+       text-shadow:0 1px 8px rgba(0,0,0,.32);
++      pointer-events:none;
+     }
+     .${BLOCK_CLASS}-metric:first-child .${BLOCK_CLASS}-percent{color:#3bf0ae}
+     .${BLOCK_CLASS}-metric:last-child .${BLOCK_CLASS}-percent{color:#9884ff}
+@@ -364,7 +383,8 @@
+       .${BLOCK_CLASS}-resources{gap:7px}
+       .${BLOCK_CLASS}-metric{height:62px;padding:8px 9px}
+       .${BLOCK_CLASS}-usage{font-size:7.2px}
+-      .${BLOCK_CLASS}-percent{font-size:13px}
++      .${BLOCK_CLASS}-spark{right:42px}
++      .${BLOCK_CLASS}-percent{min-width:36px;font-size:13px}
+     }
+ 
+     @media(prefers-reduced-motion:reduce){.${BLOCK_CLASS}-live-dot{animation:none!important}}
+diff --git a/tests/node-pro-card.cjs b/tests/node-pro-card.cjs
+index 63f13e7..a6f267e 100644
+--- a/tests/node-pro-card.cjs
++++ b/tests/node-pro-card.cjs
+@@ -20,12 +20,15 @@ const {chromium}=require('playwright'),fs=require('fs'),path=require('path'),ass
+   assert.match(await rx.innerText(),/RECEIVE[\s\S]*42\.7[\s\S]*Mbps/);
+   assert.match(await tx.innerText(),/SEND[\s\S]*8\.4[\s\S]*Mbps/);
+   assert.equal(await rx.locator('svg').count(),1); assert.equal(await tx.locator('svg').count(),1);
+-  const geometry=await block.evaluate(el=>{const rx=el.querySelector('[data-hs-network=\"rx\"]'),shell=el.querySelector('.hs-node-pro-live-shell'),network=el.querySelector('.hs-node-pro-network'),card=el.closest('.hs-node-pro-card'),name=card?.querySelector('h3');const cs=e=>e?getComputedStyle(e):null;return{rx:rx?.getBoundingClientRect().height||0,block:el.getBoundingClientRect().height,shellRadius:parseFloat(cs(shell)?.borderRadius||'0'),cardRadius:parseFloat(cs(card)?.borderRadius||'0'),columns:cs(network)?.gridTemplateColumns||'',nameColor:cs(name)?.color||'',cardBg:cs(card)?.backgroundImage||''};});
++  const geometry=await block.evaluate(el=>{const rx=el.querySelector('[data-hs-network=\"rx\"]'),shell=el.querySelector('.hs-node-pro-live-shell'),network=el.querySelector('.hs-node-pro-network'),card=el.closest('.hs-node-pro-card'),name=card?.querySelector('h3'),head=el.querySelector('.hs-node-pro-live-head'),realtime=el.querySelector('.hs-node-pro-realtime'),metric=el.querySelector('.hs-node-pro-metric'),spark=metric?.querySelector('.hs-node-pro-spark'),percent=metric?.querySelector('.hs-node-pro-percent');const cs=e=>e?getComputedStyle(e):null,rect=e=>e?.getBoundingClientRect();const hr=rect(head),rr=rect(realtime),sr=rect(spark),pr=rect(percent);return{rx:rx?.getBoundingClientRect().height||0,block:el.getBoundingClientRect().height,shellRadius:parseFloat(cs(shell)?.borderRadius||'0'),cardRadius:parseFloat(cs(card)?.borderRadius||'0'),columns:cs(network)?.gridTemplateColumns||'',nameColor:cs(name)?.color||'',cardBg:cs(card)?.backgroundImage||'',realtimeCenterDelta:hr&&rr?Math.abs((hr.top+hr.height/2)-(rr.top+rr.height/2)):999,realtimeHeight:rr?.height||0,sparkPercentGap:sr&&pr?pr.left-sr.right:-999};});
+   assert(geometry.rx>=76&&geometry.rx<=86,`reference live metric height mismatch: ${geometry.rx}`);
+   assert(geometry.block>0&&geometry.block<=205,`Node PRO block too tall: ${geometry.block}`);
+   assert(geometry.shellRadius>=16,`live glass radius too small: ${geometry.shellRadius}`);
+   assert(geometry.cardRadius>=22,`outer glass radius too small: ${geometry.cardRadius}`);
+   assert(geometry.columns.split(' ').length>=2,`live network is not two-column: ${geometry.columns}`);
++  assert(geometry.realtimeHeight===16,`REALTIME badge height mismatch: ${geometry.realtimeHeight}`);
++  assert(geometry.realtimeCenterDelta<=0.5,`REALTIME badge is not vertically centered: ${geometry.realtimeCenterDelta}`);
++  assert(geometry.sparkPercentGap>=4,`CPU/RAM sparkline overlaps percentage safe-zone: ${geometry.sparkPercentGap}`);
+   assert.equal(geometry.nameColor,'rgb(235, 204, 99)');
+   assert(geometry.cardBg.includes('linear-gradient'),'outer card must use liquid-glass gradient');
+   assert((await block.innerText()).includes('LIVE NETWORK')); assert((await block.innerText()).includes('REALTIME'));
