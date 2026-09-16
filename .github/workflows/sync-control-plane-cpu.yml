@@ -1,0 +1,24 @@
+name: sync-control-plane-cpu
+on:
+  push:
+    branches: [fix/control-plane-cpu]
+permissions:
+  contents: write
+jobs:
+  sync:
+    if: "!contains(github.event.head_commit.message, '[sync-applied]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply tested patch
+        shell: bash
+        run: |
+          cat .sync/cpu-*.patch > /tmp/control-plane-cpu.patch
+          git config user.name PEDIHS
+          git config user.email 130468444+PEDIHS@users.noreply.github.com
+          git am /tmp/control-plane-cpu.patch
+          git rm .sync/cpu-*.patch .github/workflows/sync-control-plane-cpu.yml
+          git commit -m 'Remove CPU sync staging [sync-applied]'
+          git push origin HEAD:fix/control-plane-cpu
