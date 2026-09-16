@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.1';
+  const VERSION = '0.9.2';
   const STYLE_ID = 'hs-node-pro-style';
   const BLOCK_CLASS = 'hs-node-pro';
   const CARD_CLASS = 'hs-node-pro-card';
@@ -36,8 +36,8 @@
         0 20px 54px -30px rgba(0,0,0,.62),
         inset 0 1px 0 rgba(255,255,255,.13),
         inset 0 -1px 0 rgba(255,255,255,.025)!important;
-      backdrop-filter:blur(26px) saturate(140%);
-      -webkit-backdrop-filter:blur(26px) saturate(140%);
+      backdrop-filter:blur(10px) saturate(115%);
+      -webkit-backdrop-filter:blur(10px) saturate(115%);
       isolation:isolate;
     }
     .${CARD_CLASS}::before{
@@ -60,8 +60,7 @@
       z-index:0;
       pointer-events:none;
       border-radius:50%;
-      background:rgba(255,255,255,.07);
-      filter:blur(46px);
+      background:radial-gradient(circle,rgba(255,255,255,.075) 0,rgba(255,255,255,.028) 45%,transparent 72%);
     }
     .${CARD_CLASS} > *{position:relative;z-index:1}
     .${CARD_CLASS} > div.p-3{padding:16px!important}
@@ -109,7 +108,6 @@
       background:rgba(255,255,255,.035)!important;
       color:rgba(255,255,255,.66)!important;
       box-shadow:inset 0 1px rgba(255,255,255,.035)!important;
-      backdrop-filter:blur(12px);
     }
     .${CARD_CLASS} .hs-node-pro-native-menu:hover{background:rgba(255,255,255,.075)!important;transform:translateY(-1px)}
 
@@ -128,8 +126,6 @@
       border-radius:18px;
       background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.018));
       box-shadow:inset 0 1px rgba(255,255,255,.055);
-      backdrop-filter:blur(20px);
-      -webkit-backdrop-filter:blur(20px);
     }
     .${BLOCK_CLASS}-live-head{
       display:flex;
@@ -139,6 +135,7 @@
       min-height:16px;
       margin-bottom:7px;
       padding:0 2px;
+      position:relative;
     }
     .${BLOCK_CLASS}-live-title{
       display:flex;
@@ -151,22 +148,30 @@
       letter-spacing:.65px;
     }
     .${BLOCK_CLASS}-realtime{
-      display:inline-flex;
+      position:absolute;
+      left:50%;
+      top:50%;
+      transform:translate(-50%,-50%);
+      display:flex;
       align-items:center;
       justify-content:center;
-      min-width:52px;
+      min-width:54px;
       height:16px;
       padding:0 7px;
+      box-sizing:border-box;
       border:1px solid rgba(255,255,255,.055);
       border-radius:999px;
       background:rgba(255,255,255,.025);
       color:rgba(255,255,255,.30);
       font-size:8.5px;
-      line-height:1;
+      line-height:16px;
       font-weight:650;
       letter-spacing:.45px;
       text-align:center;
+      white-space:nowrap;
+      pointer-events:none;
     }
+    .${BLOCK_CLASS}-realtime > span{display:block;transform:translateY(.5px)}
     .${BLOCK_CLASS}-live-dot{
       width:6px;
       height:6px;
@@ -176,7 +181,7 @@
       box-shadow:0 0 10px rgba(59,240,174,.7);
       animation:hs-node-live-pulse 1.5s ease-in-out infinite;
     }
-    @keyframes hs-node-live-pulse{50%{opacity:.35;box-shadow:0 0 3px rgba(59,240,174,.28)}}
+    @keyframes hs-node-live-pulse{50%{opacity:.35}}
     .${BLOCK_CLASS}-network{
       display:grid;
       grid-template-columns:minmax(0,1fr) minmax(0,1fr);
@@ -202,8 +207,7 @@
       left:-25px;
       top:-31px;
       border-radius:50%;
-      background:rgba(255,255,255,.055);
-      filter:blur(22px);
+      background:radial-gradient(circle,rgba(255,255,255,.06) 0,rgba(255,255,255,.018) 48%,transparent 72%);
       pointer-events:none;
     }
     .${BLOCK_CLASS}-network-label{
@@ -253,8 +257,8 @@
     }
     .${BLOCK_CLASS}-network-spark svg{display:block;width:100%;height:100%;overflow:visible}
     .${BLOCK_CLASS}-network-spark path{fill:none;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
-    .${BLOCK_CLASS}-network-spark.rx path{stroke:#43b7ff;filter:drop-shadow(0 0 3px rgba(67,183,255,.28))}
-    .${BLOCK_CLASS}-network-spark.tx path{stroke:#3bf0ae;filter:drop-shadow(0 0 3px rgba(59,240,174,.25))}
+    .${BLOCK_CLASS}-network-spark.rx path{stroke:#43b7ff}
+    .${BLOCK_CLASS}-network-spark.tx path{stroke:#3bf0ae}
 
     .${BLOCK_CLASS}-resources{
       display:grid;
@@ -309,16 +313,16 @@
       text-align:right;
     }
     .${BLOCK_CLASS}-chart-row{position:absolute;inset:24px 10px 6px 10px;z-index:1}
-    .${BLOCK_CLASS}-spark{position:absolute;left:0;right:46px;bottom:0;height:29px;overflow:hidden;opacity:.72}
+    .${BLOCK_CLASS}-spark{position:absolute;left:0;right:58px;bottom:0;height:29px;overflow:hidden;opacity:.72}
     .${BLOCK_CLASS}-spark svg{display:block;width:100%;height:100%;overflow:visible}
     .${BLOCK_CLASS}-spark path{fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
-    .${BLOCK_CLASS}-spark.green path{stroke:#3bf0ae;filter:drop-shadow(0 0 3px rgba(59,240,174,.22))}
-    .${BLOCK_CLASS}-spark.purple path{stroke:#9884ff;filter:drop-shadow(0 0 3px rgba(152,132,255,.22))}
+    .${BLOCK_CLASS}-spark.green path{stroke:#3bf0ae}
+    .${BLOCK_CLASS}-spark.purple path{stroke:#9884ff}
     .${BLOCK_CLASS}-percent{
       position:absolute;
       right:0;
       top:2px;
-      min-width:40px;
+      min-width:46px;
       z-index:3;
       color:#f4f7fa;
       font-size:15px;
@@ -383,8 +387,8 @@
       .${BLOCK_CLASS}-resources{gap:7px}
       .${BLOCK_CLASS}-metric{height:62px;padding:8px 9px}
       .${BLOCK_CLASS}-usage{font-size:7.2px}
-      .${BLOCK_CLASS}-spark{right:42px}
-      .${BLOCK_CLASS}-percent{min-width:36px;font-size:13px}
+      .${BLOCK_CLASS}-spark{right:50px}
+      .${BLOCK_CLASS}-percent{min-width:40px;font-size:13px}
     }
 
     @media(prefers-reduced-motion:reduce){.${BLOCK_CLASS}-live-dot{animation:none!important}}
@@ -691,6 +695,57 @@
     if (menu instanceof HTMLElement) menu.classList.add('hs-node-pro-native-menu');
   }
 
+  function nodeMarkup() {
+    return `
+      <div class="${BLOCK_CLASS}-live-shell">
+        <div class="${BLOCK_CLASS}-live-head">
+          <div class="${BLOCK_CLASS}-live-title"><span class="${BLOCK_CLASS}-live-dot"></span><span>LIVE NETWORK</span></div>
+          <span class="${BLOCK_CLASS}-realtime"><span>REALTIME</span></span>
+        </div>
+        <div class="${BLOCK_CLASS}-network" aria-label="Live network traffic">
+          <div class="${BLOCK_CLASS}-network-metric" data-hs-network="rx">
+            <div class="${BLOCK_CLASS}-network-label"><span class="${BLOCK_CLASS}-network-arrow rx">↓</span><span>RECEIVE</span></div>
+            <div class="${BLOCK_CLASS}-network-rate rx"><span data-hs-field="rx-value">0</span><span class="${BLOCK_CLASS}-unit" data-hs-field="rx-unit">bps</span></div>
+            <div class="${BLOCK_CLASS}-network-spark rx"><svg viewBox="0 0 220 40" preserveAspectRatio="none"><path/></svg></div>
+          </div>
+          <div class="${BLOCK_CLASS}-network-metric" data-hs-network="tx">
+            <div class="${BLOCK_CLASS}-network-label"><span class="${BLOCK_CLASS}-network-arrow tx">↑</span><span>SEND</span></div>
+            <div class="${BLOCK_CLASS}-network-rate tx"><span data-hs-field="tx-value">0</span><span class="${BLOCK_CLASS}-unit" data-hs-field="tx-unit">bps</span></div>
+            <div class="${BLOCK_CLASS}-network-spark tx"><svg viewBox="0 0 220 40" preserveAspectRatio="none"><path/></svg></div>
+          </div>
+        </div>
+      </div>
+      <div class="${BLOCK_CLASS}-resources">
+        <div class="${BLOCK_CLASS}-metric" data-hs-resource="cpu">
+          <div class="${BLOCK_CLASS}-head"><div class="${BLOCK_CLASS}-title">${cpuIcon}<span>CPU</span></div><div class="${BLOCK_CLASS}-usage" data-hs-field="cpu-usage">—</div></div>
+          <div class="${BLOCK_CLASS}-chart-row"><div class="${BLOCK_CLASS}-spark green"><svg viewBox="0 0 180 29" preserveAspectRatio="none"><path/></svg></div><div class="${BLOCK_CLASS}-percent" data-hs-field="cpu-percent">0%</div></div>
+        </div>
+        <div class="${BLOCK_CLASS}-metric" data-hs-resource="ram">
+          <div class="${BLOCK_CLASS}-head"><div class="${BLOCK_CLASS}-title">${ramIcon}<span>RAM</span></div><div class="${BLOCK_CLASS}-usage" data-hs-field="ram-usage">—</div></div>
+          <div class="${BLOCK_CLASS}-chart-row"><div class="${BLOCK_CLASS}-spark purple"><svg viewBox="0 0 180 29" preserveAspectRatio="none"><path/></svg></div><div class="${BLOCK_CLASS}-percent" data-hs-field="ram-percent">0%</div></div>
+        </div>
+      </div>`;
+  }
+
+  function ensureNodeMarkup(block) {
+    if (block.dataset.hsReady === '1') return;
+    block.innerHTML = nodeMarkup();
+    block.dataset.hsReady = '1';
+  }
+
+  function setField(block, name, value, title) {
+    const el = block.querySelector(`[data-hs-field="${name}"]`);
+    if (!el) return;
+    const text = String(value);
+    if (el.textContent !== text) el.textContent = text;
+    if (title !== undefined && el.getAttribute('title') !== title) el.setAttribute('title', title);
+  }
+
+  function setPath(block, selector, d) {
+    const path = block.querySelector(selector);
+    if (path && path.getAttribute('d') !== d) path.setAttribute('d', d);
+  }
+
   function renderNode(node, stats) {
     const card = cardForNode(node);
     if (!card) return false;
@@ -709,71 +764,39 @@
     }
 
     if (!stats) {
-      const errorHtml = `<div class="${BLOCK_CLASS}-error">Realtime stats unavailable</div>`;
-      if (block.innerHTML !== errorHtml) block.innerHTML = errorHtml;
+      if (block.dataset.hsReady !== 'error') {
+        block.innerHTML = `<div class="${BLOCK_CLASS}-error">Realtime stats unavailable</div>`;
+        block.dataset.hsReady = 'error';
+      }
       return true;
     }
 
+    ensureNodeMarkup(block);
     const cpu = clamp(stats.cpu_usage);
     const cpuCores = Math.max(0, Number(stats.cpu_cores) || 0);
     const cpuUsed = cpuCores ? cpuCores * cpu / 100 : 0;
     const ramUsed = Number(stats.mem_used) || 0;
     const ramTotal = Number(stats.mem_total) || 0;
     const ramPct = ramTotal ? clamp((ramUsed / ramTotal) * 100) : 0;
-
     const cpuPercent = `${cpu.toFixed(cpu < 10 ? 1 : 0)}%`;
     const ramPercent = `${ramPct.toFixed(ramPct < 10 ? 1 : 0)}%`;
     const cpuUsageText = cpuCores ? `${formatCoreValue(cpuUsed)} / ${formatCoreValue(cpuCores)} cores` : '—';
     const ramUsageText = ramTotal ? `${formatBytes(ramUsed)} / ${formatBytes(ramTotal)}` : '—';
-    const rx = Math.max(0, Number(stats.incoming_bandwidth_speed) || 0);
-    const tx = Math.max(0, Number(stats.outgoing_bandwidth_speed) || 0);
+    const rxDisplay = formatBandwidthParts(Math.max(0, Number(stats.incoming_bandwidth_speed) || 0));
+    const txDisplay = formatBandwidthParts(Math.max(0, Number(stats.outgoing_bandwidth_speed) || 0));
 
-    const rxDisplay = formatBandwidthParts(rx);
-    const txDisplay = formatBandwidthParts(tx);
-
-    const html = `
-      <div class="${BLOCK_CLASS}-live-shell">
-        <div class="${BLOCK_CLASS}-live-head">
-          <div class="${BLOCK_CLASS}-live-title"><span class="${BLOCK_CLASS}-live-dot"></span><span>LIVE NETWORK</span></div>
-          <span class="${BLOCK_CLASS}-realtime">REALTIME</span>
-        </div>
-        <div class="${BLOCK_CLASS}-network" aria-label="Live network traffic">
-          <div class="${BLOCK_CLASS}-network-metric" data-hs-network="rx">
-            <div class="${BLOCK_CLASS}-network-label"><span class="${BLOCK_CLASS}-network-arrow rx">↓</span><span>RECEIVE</span></div>
-            <div class="${BLOCK_CLASS}-network-rate rx"><span>${rxDisplay.value}</span><span class="${BLOCK_CLASS}-unit">${rxDisplay.unit}</span></div>
-            <div class="${BLOCK_CLASS}-network-spark rx">${rateSpark(getHistory(node.id, 'rx'), 220, 40)}</div>
-          </div>
-          <div class="${BLOCK_CLASS}-network-metric" data-hs-network="tx">
-            <div class="${BLOCK_CLASS}-network-label"><span class="${BLOCK_CLASS}-network-arrow tx">↑</span><span>SEND</span></div>
-            <div class="${BLOCK_CLASS}-network-rate tx"><span>${txDisplay.value}</span><span class="${BLOCK_CLASS}-unit">${txDisplay.unit}</span></div>
-            <div class="${BLOCK_CLASS}-network-spark tx">${rateSpark(getHistory(node.id, 'tx'), 220, 40)}</div>
-          </div>
-        </div>
-      </div>
-      <div class="${BLOCK_CLASS}-resources">
-        <div class="${BLOCK_CLASS}-metric">
-          <div class="${BLOCK_CLASS}-head">
-            <div class="${BLOCK_CLASS}-title">${cpuIcon}<span>CPU</span></div>
-            <div class="${BLOCK_CLASS}-usage" title="${cpuUsageText}">${cpuUsageText}</div>
-          </div>
-          <div class="${BLOCK_CLASS}-chart-row">
-            <div class="${BLOCK_CLASS}-spark green">${spark(getHistory(node.id, 'cpu'))}</div>
-            <div class="${BLOCK_CLASS}-percent">${cpuPercent}</div>
-          </div>
-        </div>
-        <div class="${BLOCK_CLASS}-metric">
-          <div class="${BLOCK_CLASS}-head">
-            <div class="${BLOCK_CLASS}-title">${ramIcon}<span>RAM</span></div>
-            <div class="${BLOCK_CLASS}-usage" title="${ramUsageText}">${ramUsageText}</div>
-          </div>
-          <div class="${BLOCK_CLASS}-chart-row">
-            <div class="${BLOCK_CLASS}-spark purple">${spark(getHistory(node.id, 'ram'))}</div>
-            <div class="${BLOCK_CLASS}-percent">${ramPercent}</div>
-          </div>
-        </div>
-      </div>`;
-
-    if (block.innerHTML !== html) block.innerHTML = html;
+    setField(block, 'rx-value', rxDisplay.value);
+    setField(block, 'rx-unit', rxDisplay.unit);
+    setField(block, 'tx-value', txDisplay.value);
+    setField(block, 'tx-unit', txDisplay.unit);
+    setField(block, 'cpu-usage', cpuUsageText, cpuUsageText);
+    setField(block, 'ram-usage', ramUsageText, ramUsageText);
+    setField(block, 'cpu-percent', cpuPercent);
+    setField(block, 'ram-percent', ramPercent);
+    setPath(block, '[data-hs-network="rx"] .hs-node-pro-network-spark path', smoothPath(ratePointSeries(getHistory(node.id, 'rx'), 220, 40, 1.5)));
+    setPath(block, '[data-hs-network="tx"] .hs-node-pro-network-spark path', smoothPath(ratePointSeries(getHistory(node.id, 'tx'), 220, 40, 1.5)));
+    setPath(block, '[data-hs-resource="cpu"] .hs-node-pro-spark path', smoothPath(pointSeries(getHistory(node.id, 'cpu'), 180, 29, 2)));
+    setPath(block, '[data-hs-resource="ram"] .hs-node-pro-spark path', smoothPath(pointSeries(getHistory(node.id, 'ram'), 180, 29, 2)));
     return true;
   }
 
@@ -804,7 +827,7 @@
   }
 
   async function refreshData() {
-    if (!enabled || !onNodesPage() || busy) return;
+    if (!enabled || !onNodesPage() || busy || document.hidden) return;
     busy = true;
     try {
       const now = Date.now();
@@ -850,12 +873,15 @@
     document.addEventListener('pointerdown', handleIpPointerDown, true);
     document.addEventListener('click', handleIpClick, true);
 
-    observer = new MutationObserver(() => {
-      if (enabled && onNodesPage()) queueRender();
+    observer = new MutationObserver(mutations => {
+      if (!enabled || !onNodesPage()) return;
+      const external = mutations.some(mutation => !(mutation.target instanceof Element) || !mutation.target.closest(`.${BLOCK_CLASS}`));
+      if (external) queueRender();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
     window.addEventListener('popstate', () => setTimeout(() => enabled ? refreshData() : removeBlocks(), 80));
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && enabled) refreshData(); });
     window.addEventListener('hs-plugin-feature-changed', event => {
       if (event.detail?.feature === 'node_pro') setEnabled(!!event.detail.enabled);
     });
