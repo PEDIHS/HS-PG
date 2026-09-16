@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.2';
+  const VERSION = '0.9.3';
   const STYLE_ID = 'hs-node-pro-style';
   const BLOCK_CLASS = 'hs-node-pro';
   const CARD_CLASS = 'hs-node-pro-card';
@@ -746,6 +746,24 @@
     if (path && path.getAttribute('d') !== d) path.setAttribute('d', d);
   }
 
+  function alignNodeBlock(card, content, block) {
+    const frame = [...card.children].find(el => el instanceof HTMLElement && el.classList.contains('p-3'));
+    if (!(frame instanceof HTMLElement)) return;
+    const frameRect = frame.getBoundingClientRect();
+    const contentRect = content.getBoundingClientRect();
+    const style = getComputedStyle(frame);
+    const padLeft = parseFloat(style.paddingLeft) || 0;
+    const padRight = parseFloat(style.paddingRight) || 0;
+    const desiredLeft = frameRect.left + padLeft;
+    const desiredWidth = Math.max(0, frameRect.width - padLeft - padRight);
+    const shift = Math.max(0, contentRect.left - desiredLeft);
+    const marginLeft = `${-shift.toFixed(2)}px`;
+    const width = `${desiredWidth.toFixed(2)}px`;
+    if (block.style.marginLeft !== marginLeft) block.style.marginLeft = marginLeft;
+    if (block.style.width !== width) block.style.width = width;
+    if (block.style.maxWidth !== 'none') block.style.maxWidth = 'none';
+  }
+
   function renderNode(node, stats) {
     const card = cardForNode(node);
     if (!card) return false;
@@ -762,6 +780,8 @@
       block.dataset.hsNodeId = String(node.id);
       content.appendChild(block);
     }
+
+    alignNodeBlock(card, content, block);
 
     if (!stats) {
       if (block.dataset.hsReady !== 'error') {
@@ -881,6 +901,7 @@
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
     window.addEventListener('popstate', () => setTimeout(() => enabled ? refreshData() : removeBlocks(), 80));
+    window.addEventListener('resize', () => { if (enabled && onNodesPage()) queueRender(); }, { passive: true });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && enabled) refreshData(); });
     window.addEventListener('hs-plugin-feature-changed', event => {
       if (event.detail?.feature === 'node_pro') setEnabled(!!event.detail.enabled);
