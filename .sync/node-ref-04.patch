@@ -1,0 +1,115 @@
+-    }
++      .${CARD_CLASS}{border-radius:22px!important}
++      .${CARD_CLASS} > div.p-3{padding:13px!important}
++      .${CARD_CLASS} h3{font-size:16px!important}
++      .${BLOCK_CLASS}-live-shell{padding:9px;border-radius:16px}
++      .${BLOCK_CLASS}-network{gap:7px}
++      .${BLOCK_CLASS}-network-metric{height:76px;padding:9px}
++      .${BLOCK_CLASS}-network-rate{font-size:16px}
++      .${BLOCK_CLASS}-network-spark{left:8px;right:8px;height:27px}
++      .${BLOCK_CLASS}-resources{gap:7px}
++      .${BLOCK_CLASS}-metric{height:62px;padding:8px 9px}
++      .${BLOCK_CLASS}-usage{font-size:7.2px}
++      .${BLOCK_CLASS}-percent{font-size:13px}
++    }
++
++    @media(prefers-reduced-motion:reduce){.${BLOCK_CLASS}-live-dot{animation:none!important}}
+   `;
+ 
+   function injectStyle() {
+@@ -327,6 +425,12 @@
+     return `${Math.round(bits)} bps`;
+   }
+ 
++  function formatBandwidthParts(value) {
++    const text = formatBandwidth(value);
++    const split = text.lastIndexOf(' ');
++    return split > 0 ? { value: text.slice(0, split), unit: text.slice(split + 1) } : { value: text, unit: '' };
++  }
++
+   function formatCoreValue(value) {
+     const n = Math.max(0, Number(value) || 0);
+     if (n >= 10) return n.toFixed(1);
+@@ -544,6 +648,29 @@
+     revealedIps.clear();
+   }
+ 
++  function decorateNativeCard(card, content) {
++    const name = content.querySelector('h3');
++    if (name) name.classList.add('hs-node-pro-native-name');
++
++    const endpoint = content.querySelector(`span.${IP_CLASS}`);
++    const info = endpoint?.closest('div.mb-2');
++    if (info) info.classList.add('hs-node-pro-native-info');
++
++    const usage = [...content.children].find(el =>
++      el instanceof HTMLElement &&
++      el.classList.contains('min-w-0') &&
++      el.classList.contains('space-y-1') &&
++      el.classList.contains('overflow-x-hidden')
++    );
++    if (usage) {
++      usage.classList.add('hs-node-pro-native-total');
++      if (usage.previousElementSibling instanceof HTMLElement) usage.previousElementSibling.classList.add('hs-node-pro-native-separator');
++    }
++
++    const menu = content.querySelector(':scope > div:first-child button[aria-haspopup="menu"]') || content.querySelector('button[aria-haspopup="menu"]');
++    if (menu instanceof HTMLElement) menu.classList.add('hs-node-pro-native-menu');
++  }
++
+   function renderNode(node, stats) {
+     const card = cardForNode(node);
+     if (!card) return false;
+@@ -551,6 +678,7 @@
+ 
+     const content = contentForCard(card);
+     if (!content) return false;
++    decorateNativeCard(card, content);
+ 
+     let block = content.querySelector(`:scope > .${BLOCK_CLASS}`);
+     if (!block) {
+@@ -580,21 +708,26 @@
+     const rx = Math.max(0, Number(stats.incoming_bandwidth_speed) || 0);
+     const tx = Math.max(0, Number(stats.outgoing_bandwidth_speed) || 0);
+ 
++    const rxDisplay = formatBandwidthParts(rx);
++    const txDisplay = formatBandwidthParts(tx);
++
+     const html = `
+-      <div class="${BLOCK_CLASS}-network" aria-label="Live network traffic">
+-        <div class="${BLOCK_CLASS}-network-metric" data-hs-network="rx">
+-          <div class="${BLOCK_CLASS}-network-head">
+-            <div class="${BLOCK_CLASS}-network-label"><span class="${BLOCK_CLASS}-live-dot"></span><span class="${BLOCK_CLASS}-network-arrow rx">↓</span><span>RX</span></div>
+-            <span class="${BLOCK_CLASS}-network-rate">${formatBandwidth(rx)}</span>
+-          </div>
+-          <div class="${BLOCK_CLASS}-network-main"><span class="${BLOCK_CLASS}-usage">RECEIVE</span><div class="${BLOCK_CLASS}-network-spark rx">${rateSpark(getHistory(node.id, 'rx'))}</div></div>
++      <div class="${BLOCK_CLASS}-live-shell">
++        <div class="${BLOCK_CLASS}-live-head">
++          <div class="${BLOCK_CLASS}-live-title"><span class="${BLOCK_CLASS}-live-dot"></span><span>LIVE NETWORK</span></div>
++          <span class="${BLOCK_CLASS}-realtime">REALTIME</span>
+         </div>
+-        <div class="${BLOCK_CLASS}-network-metric" data-hs-network="tx">
+-          <div class="${BLOCK_CLASS}-network-head">
+-            <div class="${BLOCK_CLASS}-network-label"><span class="${BLOCK_CLASS}-live-dot"></span><span class="${BLOCK_CLASS}-network-arrow tx">↑</span><span>TX</span></div>
+-            <span class="${BLOCK_CLASS}-network-rate">${formatBandwidth(tx)}</span>
++        <div class="${BLOCK_CLASS}-network" aria-label="Live network traffic">
++          <div class="${BLOCK_CLASS}-network-metric" data-hs-network="rx">
++            <div class="${BLOCK_CLASS}-network-label"><span class="${BLOCK_CLASS}-network-arrow rx">↓</span><span>RECEIVE</span></div>
++            <div class="${BLOCK_CLASS}-network-rate rx"><span>${rxDisplay.value}</span><span class="${BLOCK_CLASS}-unit">${rxDisplay.unit}</span></div>
++            <div class="${BLOCK_CLASS}-network-spark rx">${rateSpark(getHistory(node.id, 'rx'), 220, 40)}</div>
++          </div>
++          <div class="${BLOCK_CLASS}-network-metric" data-hs-network="tx">
++            <div class="${BLOCK_CLASS}-network-label"><span class="${BLOCK_CLASS}-network-arrow tx">↑</span><span>SEND</span></div>
++            <div class="${BLOCK_CLASS}-network-rate tx"><span>${txDisplay.value}</span><span class="${BLOCK_CLASS}-unit">${txDisplay.unit}</span></div>
++            <div class="${BLOCK_CLASS}-network-spark tx">${rateSpark(getHistory(node.id, 'tx'), 220, 40)}</div>
+           </div>
+-          <div class="${BLOCK_CLASS}-network-main"><span class="${BLOCK_CLASS}-usage">SEND</span><div class="${BLOCK_CLASS}-network-spark tx">${rateSpark(getHistory(node.id, 'tx'))}</div></div>
+         </div>
+       </div>
+       <div class="${BLOCK_CLASS}-resources">
+@@ -608,7 +741,6 @@
+             <div class="${BLOCK_CLASS}-percent">${cpuPercent}</div>
+           </div>
+         </div>
+-
+         <div class="${BLOCK_CLASS}-metric">
