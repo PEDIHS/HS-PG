@@ -20,12 +20,15 @@ const {chromium}=require('playwright'),fs=require('fs'),path=require('path'),ass
   assert.match(await rx.innerText(),/RECEIVE[\s\S]*42\.7[\s\S]*Mbps/);
   assert.match(await tx.innerText(),/SEND[\s\S]*8\.4[\s\S]*Mbps/);
   assert.equal(await rx.locator('svg').count(),1); assert.equal(await tx.locator('svg').count(),1);
-  const geometry=await block.evaluate(el=>{const rx=el.querySelector('[data-hs-network=\"rx\"]'),shell=el.querySelector('.hs-node-pro-live-shell'),network=el.querySelector('.hs-node-pro-network'),card=el.closest('.hs-node-pro-card'),name=card?.querySelector('h3');const cs=e=>e?getComputedStyle(e):null;return{rx:rx?.getBoundingClientRect().height||0,block:el.getBoundingClientRect().height,shellRadius:parseFloat(cs(shell)?.borderRadius||'0'),cardRadius:parseFloat(cs(card)?.borderRadius||'0'),columns:cs(network)?.gridTemplateColumns||'',nameColor:cs(name)?.color||'',cardBg:cs(card)?.backgroundImage||''};});
+  const geometry=await block.evaluate(el=>{const rx=el.querySelector('[data-hs-network=\"rx\"]'),shell=el.querySelector('.hs-node-pro-live-shell'),network=el.querySelector('.hs-node-pro-network'),card=el.closest('.hs-node-pro-card'),name=card?.querySelector('h3'),head=el.querySelector('.hs-node-pro-live-head'),realtime=el.querySelector('.hs-node-pro-realtime'),metric=el.querySelector('.hs-node-pro-metric'),spark=metric?.querySelector('.hs-node-pro-spark'),percent=metric?.querySelector('.hs-node-pro-percent');const cs=e=>e?getComputedStyle(e):null,rect=e=>e?.getBoundingClientRect();const hr=rect(head),rr=rect(realtime),sr=rect(spark),pr=rect(percent);return{rx:rx?.getBoundingClientRect().height||0,block:el.getBoundingClientRect().height,shellRadius:parseFloat(cs(shell)?.borderRadius||'0'),cardRadius:parseFloat(cs(card)?.borderRadius||'0'),columns:cs(network)?.gridTemplateColumns||'',nameColor:cs(name)?.color||'',cardBg:cs(card)?.backgroundImage||'',realtimeCenterDelta:hr&&rr?Math.abs((hr.top+hr.height/2)-(rr.top+rr.height/2)):999,realtimeHeight:rr?.height||0,sparkPercentGap:sr&&pr?pr.left-sr.right:-999};});
   assert(geometry.rx>=76&&geometry.rx<=86,`reference live metric height mismatch: ${geometry.rx}`);
   assert(geometry.block>0&&geometry.block<=205,`Node PRO block too tall: ${geometry.block}`);
   assert(geometry.shellRadius>=16,`live glass radius too small: ${geometry.shellRadius}`);
   assert(geometry.cardRadius>=22,`outer glass radius too small: ${geometry.cardRadius}`);
   assert(geometry.columns.split(' ').length>=2,`live network is not two-column: ${geometry.columns}`);
+  assert(geometry.realtimeHeight===16,`REALTIME badge height mismatch: ${geometry.realtimeHeight}`);
+  assert(geometry.realtimeCenterDelta<=0.5,`REALTIME badge is not vertically centered: ${geometry.realtimeCenterDelta}`);
+  assert(geometry.sparkPercentGap>=4,`CPU/RAM sparkline overlaps percentage safe-zone: ${geometry.sparkPercentGap}`);
   assert.equal(geometry.nameColor,'rgb(235, 204, 99)');
   assert(geometry.cardBg.includes('linear-gradient'),'outer card must use liquid-glass gradient');
   assert((await block.innerText()).includes('LIVE NETWORK')); assert((await block.innerText()).includes('REALTIME'));
