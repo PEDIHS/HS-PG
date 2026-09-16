@@ -1,0 +1,23 @@
+name: sync-node-reference
+on:
+  push:
+    branches: [fix/node-reference-glass]
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply tested Node reference patch
+        shell: bash
+        run: |
+          cat .sync/node-ref-*.patch > /tmp/node-reference.patch
+          git apply --index /tmp/node-reference.patch
+          git rm .sync/node-ref-*.patch .github/workflows/sync-node-reference.yml
+          git config user.name PEDIHS
+          git config user.email 130468444+PEDIHS@users.noreply.github.com
+          git commit -m "Match Node cards to liquid glass reference"
+          git push origin HEAD:fix/node-reference-glass
