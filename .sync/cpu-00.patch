@@ -1,0 +1,140 @@
+From 26bb4d1c472ae01b602a6677e8d5a94d4b63cad5 Mon Sep 17 00:00:00 2001
+From: PEDIHS <130468444+PEDIHS@users.noreply.github.com>
+Date: Wed, 16 Sep 2026 19:02:50 +0330
+Subject: [PATCH] Reduce HS control-plane CPU overhead
+
+---
+ backend/hs_fair_runtime.py       |  8 +--
+ backend/hs_local_bridge.py       | 38 ++++++++++++-
+ backend/hs_services_agent.py     | 98 +++++++++++++++++++++++++++++---
+ install.sh                       |  7 ++-
+ plugin/integrate-guard.sh        | 37 ++++++++++++
+ systemd/hs-pg-integrator.service |  4 +-
+ tests/test_fair_manifest.py      | 10 ++++
+ tests/test_services.py           | 59 +++++++++++++++++++
+ 8 files changed, 243 insertions(+), 18 deletions(-)
+ create mode 100755 plugin/integrate-guard.sh
+
+diff --git a/backend/hs_fair_runtime.py b/backend/hs_fair_runtime.py
+index 8657d1e..04df67f 100644
+--- a/backend/hs_fair_runtime.py
++++ b/backend/hs_fair_runtime.py
+@@ -2,13 +2,16 @@
+ from __future__ import annotations
+ import hashlib
+ import json
++import os
+ import time
++from pathlib import Path
+ try:
+     from app import hs_services as store
+ except ImportError:
+     import hs_services as store
+ 
+ 
++STATE_FILE = Path(os.getenv('HS_PLUGIN_DATA_DIR', '/var/lib/pasarguard/hs-plugin')) / 'state.json'
+ _cache={}
+ def snapshot(name):
+     path=store.DATA/name
+@@ -21,15 +24,12 @@ def snapshot(name):
+ 
+ def enabled():
+     try:
+-        from app.routers.hs_plugin_api import STATE_FILE
+         stamp = STATE_FILE.stat().st_mtime_ns
+         key = str(STATE_FILE)
+         if _cache.get(key, (None,))[0] != stamp:
+             _cache[key] = (stamp, json.loads(STATE_FILE.read_text()))
+         return bool(_cache[key][1].get('features',{}).get('fair_use',{}).get('enabled'))
+-    except ImportError:
+-        return False
+-    except (OSError, ValueError):
++    except (OSError, ValueError, TypeError):
+         return False
+ 
+ 
+diff --git a/backend/hs_local_bridge.py b/backend/hs_local_bridge.py
+index aed49ba..cffb335 100644
+--- a/backend/hs_local_bridge.py
++++ b/backend/hs_local_bridge.py
+@@ -112,11 +112,43 @@ def complete(body: dict) -> dict:
+     )
+ 
+ 
++async def _dispatch(action: str, payload: dict) -> dict:
++    if action == "poll":
++        return await poll(payload)
++    if action == "complete":
++        return complete(payload)
++    raise ValueError("Invalid local bridge action")
++
++
++async def _serve() -> None:
++    # JSON-lines keeps one imported PasarGuard/SQLAlchemy process alive instead of
++    # paying Python + model import cost on every 10-second agent poll.
++    while True:
++        line = await asyncio.to_thread(sys.stdin.readline)
++        if not line:
++            return
++        try:
++            request = json.loads(line)
++            action = str(request.get("action", ""))
++            payload = request.get("payload", {})
++            if not isinstance(payload, dict):
++                raise ValueError("Local bridge payload must be an object")
++            result = await _dispatch(action, payload)
++            response = {"ok": True, "result": result}
++        except Exception as exc:
++            response = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
++        sys.stdout.write(json.dumps(response, separators=(",", ":")) + "\n")
++        sys.stdout.flush()
++
++
+ async def amain() -> None:
+-    if len(sys.argv) != 2 or sys.argv[1] not in {"poll", "complete"}:
+-        raise SystemExit("Usage: python -m app.hs_local_bridge poll|complete")
++    if len(sys.argv) != 2 or sys.argv[1] not in {"poll", "complete", "serve"}:
++        raise SystemExit("Usage: python -m app.hs_local_bridge poll|complete|serve")
++    if sys.argv[1] == "serve":
++        await _serve()
++        return
+     payload = json.load(sys.stdin)
+-    result = await poll(payload) if sys.argv[1] == "poll" else complete(payload)
++    result = await _dispatch(sys.argv[1], payload)
+     json.dump(result, sys.stdout, separators=(",", ":"))
+ 
+ 
+diff --git a/backend/hs_services_agent.py b/backend/hs_services_agent.py
+index 3528cb0..020e53d 100644
+--- a/backend/hs_services_agent.py
++++ b/backend/hs_services_agent.py
+@@ -13,6 +13,8 @@ import shutil
+ import socket
+ import ssl
+ import subprocess
++import select
++import threading
+ import sys
+ import tempfile
+ import time
+@@ -141,7 +143,15 @@ def fair_ack_path(path):
+     return {}
+ 
+ 
+-def pasarguard_nodes_inventory(private=False):
++_PG_NODE_CACHE = {"at": 0.0, "rows": []}
++_PG_NODE_CACHE_TTL = 60.0
++
++
++def _pasarguard_nodes_static():
++    now = time.monotonic()
++    cached = _PG_NODE_CACHE.get("rows", [])
++    if cached and now - float(_PG_NODE_CACHE.get("at", 0)) < _PG_NODE_CACHE_TTL:
++        return cached
+     result=[]
+     if not shutil.which("docker"):
+         return result
+@@ -165,12 +175,24 @@ def pasarguard_nodes_inventory(private=False):
+             try:
+                 item["xray"]=run(["docker","exec",parts[0],"/usr/local/bin/xray","version"],timeout=10).splitlines()[0][:160]
+             except (RuntimeError,IndexError):pass
