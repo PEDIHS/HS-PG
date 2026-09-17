@@ -13,6 +13,8 @@ import shutil
 import socket
 import ssl
 import subprocess
+import select
+import threading
 import sys
 import tempfile
 import time
@@ -141,7 +143,15 @@ def fair_ack_path(path):
     return {}
 
 
-def pasarguard_nodes_inventory(private=False):
+_PG_NODE_CACHE = {"at": 0.0, "rows": []}
+_PG_NODE_CACHE_TTL = 60.0
+
+
+def _pasarguard_nodes_static():
+    now = time.monotonic()
+    cached = _PG_NODE_CACHE.get("rows", [])
+    if cached and now - float(_PG_NODE_CACHE.get("at", 0)) < _PG_NODE_CACHE_TTL:
+        return cached
     result=[]
     if not shutil.which("docker"):
         return result
@@ -165,12 +175,24 @@ def pasarguard_nodes_inventory(private=False):
             try:
                 item["xray"]=run(["docker","exec",parts[0],"/usr/local/bin/xray","version"],timeout=10).splitlines()[0][:160]
             except (RuntimeError,IndexError):pass
-            item["fair_use"]=fair_ack_path(fair_file) if fair_file else {}
             item["fair_core_configured"]=bool(env.get("XRAY_EXECUTABLE_PATH","").endswith("xray-hs-fair") and env.get("HS_FAIR_POLICY_FILE"))
-            if private and fair_file:item["_fair_policy_file"]=str(fair_file)
+            if fair_file:item["_fair_policy_file"]=str(fair_file)
             result.append(item)
     except RuntimeError:
         pass
+    _PG_NODE_CACHE["at"] = now
+    _PG_NODE_CACHE["rows"] = result
+    return result
+
+
+def pasarguard_nodes_inventory(private=False):
+    result=[]
+    for base in _pasarguard_nodes_static():
+        fair_file=base.get("_fair_policy_file")
+        item={k:v for k,v in base.items() if k != "_fair_policy_file"}
+        item["fair_use"]=fair_ack_path(fair_file) if fair_file else {}
+        if private and fair_file:item["_fair_policy_file"]=fair_file
+        result.append(item)
     return result
 
 
@@ -221,14 +243,76 @@ def panel_container():
     return ""
 
 
+_LOCAL_BRIDGE_PROC = None
+_LOCAL_BRIDGE_CID = ""
+_LOCAL_BRIDGE_LOCK = threading.Lock()
+
+
+def _close_local_bridge():
+    global _LOCAL_BRIDGE_PROC, _LOCAL_BRIDGE_CID
+    proc = _LOCAL_BRIDGE_PROC
+    _LOCAL_BRIDGE_PROC = None
+    _LOCAL_BRIDGE_CID = ""
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=2)
+    except Exception:
+        try: proc.kill()
+        except Exception: pass
+
+
+def _persistent_local_panel(cid, action, payload):
+    global _LOCAL_BRIDGE_PROC, _LOCAL_BRIDGE_CID
+    proc = _LOCAL_BRIDGE_PROC
+    if proc is None or proc.poll() is not None or _LOCAL_BRIDGE_CID != cid:
+        _close_local_bridge()
+        proc = subprocess.Popen(
+            ["docker", "exec", "-i", cid, "python", "-u", "-m", "app.hs_local_bridge", "serve"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, bufsize=1,
+        )
+        _LOCAL_BRIDGE_PROC = proc
+        _LOCAL_BRIDGE_CID = cid
+    if proc.stdin is None or proc.stdout is None:
+        raise RuntimeError('Local HS bridge pipes unavailable')
+    request = json.dumps({"action": action, "payload": payload}, separators=(",", ":"))
+    proc.stdin.write(request + "\n")
+    proc.stdin.flush()
+    ready, _, _ = select.select([proc.stdout], [], [], 45)
+    if not ready:
+        _close_local_bridge()
+        raise TimeoutError('Local HS bridge timed out')
+    line = proc.stdout.readline()
+    if not line:
+        code = proc.poll()
+        _close_local_bridge()
+        raise RuntimeError(f'Local HS bridge exited unexpectedly ({code})')
+    response = json.loads(line)
+    if not response.get('ok'):
+        raise RuntimeError(response.get('error') or 'Local HS bridge failed')
+    return response.get('result', {})
+
+
 def local_panel(action,payload):
     if action not in {'poll','complete'}:raise ValueError('Invalid local bridge action')
     cid=panel_container()
     if not cid:raise RuntimeError('PasarGuard panel container not found')
-    proc=subprocess.run(["docker","exec","-i",cid,"python","-m","app.hs_local_bridge",action],input=json.dumps(payload),capture_output=True,text=True,timeout=45)
-    if proc.returncode:raise RuntimeError('Local HS bridge failed; inspect hs-services-agent journal')
-    try:return json.loads(proc.stdout)
-    except ValueError as exc:raise RuntimeError('Local HS bridge returned invalid data') from exc
+    with _LOCAL_BRIDGE_LOCK:
+        try:
+            return _persistent_local_panel(cid, action, payload)
+        except Exception as persistent_error:
+            # Deployment/backward-compatibility fallback: an older panel copy may not
+            # understand `serve` yet. Keep control-plane availability and retry the
+            # persistent transport on the next poll.
+            _close_local_bridge()
+            proc=subprocess.run(["docker","exec","-i",cid,"python","-m","app.hs_local_bridge",action],input=json.dumps(payload),capture_output=True,text=True,timeout=45)
+            if proc.returncode:
+                raise RuntimeError('Local HS bridge failed; inspect hs-services-agent journal') from persistent_error
+            try:return json.loads(proc.stdout)
+            except ValueError as exc:raise RuntimeError('Local HS bridge returned invalid data') from exc
 
 
 def inventory():

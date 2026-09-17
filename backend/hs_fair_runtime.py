@@ -2,13 +2,16 @@
 from __future__ import annotations
 import hashlib
 import json
+import os
 import time
+from pathlib import Path
 try:
     from app import hs_services as store
 except ImportError:
     import hs_services as store
 
 
+STATE_FILE = Path(os.getenv('HS_PLUGIN_DATA_DIR', '/var/lib/pasarguard/hs-plugin')) / 'state.json'
 _cache={}
 def snapshot(name):
     path=store.DATA/name
@@ -21,15 +24,12 @@ def snapshot(name):
 
 def enabled():
     try:
-        from app.routers.hs_plugin_api import STATE_FILE
         stamp = STATE_FILE.stat().st_mtime_ns
         key = str(STATE_FILE)
         if _cache.get(key, (None,))[0] != stamp:
             _cache[key] = (stamp, json.loads(STATE_FILE.read_text()))
         return bool(_cache[key][1].get('features',{}).get('fair_use',{}).get('enabled'))
-    except ImportError:
-        return False
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return False
 
 

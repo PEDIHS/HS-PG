@@ -112,11 +112,43 @@ def complete(body: dict) -> dict:
     )
 
 
+async def _dispatch(action: str, payload: dict) -> dict:
+    if action == "poll":
+        return await poll(payload)
+    if action == "complete":
+        return complete(payload)
+    raise ValueError("Invalid local bridge action")
+
+
+async def _serve() -> None:
+    # JSON-lines keeps one imported PasarGuard/SQLAlchemy process alive instead of
+    # paying Python + model import cost on every 10-second agent poll.
+    while True:
+        line = await asyncio.to_thread(sys.stdin.readline)
+        if not line:
+            return
+        try:
+            request = json.loads(line)
+            action = str(request.get("action", ""))
+            payload = request.get("payload", {})
+            if not isinstance(payload, dict):
+                raise ValueError("Local bridge payload must be an object")
+            result = await _dispatch(action, payload)
+            response = {"ok": True, "result": result}
+        except Exception as exc:
+            response = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        sys.stdout.write(json.dumps(response, separators=(",", ":")) + "\n")
+        sys.stdout.flush()
+
+
 async def amain() -> None:
-    if len(sys.argv) != 2 or sys.argv[1] not in {"poll", "complete"}:
-        raise SystemExit("Usage: python -m app.hs_local_bridge poll|complete")
+    if len(sys.argv) != 2 or sys.argv[1] not in {"poll", "complete", "serve"}:
+        raise SystemExit("Usage: python -m app.hs_local_bridge poll|complete|serve")
+    if sys.argv[1] == "serve":
+        await _serve()
+        return
     payload = json.load(sys.stdin)
-    result = await poll(payload) if sys.argv[1] == "poll" else complete(payload)
+    result = await _dispatch(sys.argv[1], payload)
     json.dump(result, sys.stdout, separators=(",", ":"))
 
 

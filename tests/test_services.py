@@ -290,3 +290,62 @@ def test_local_manifests_write_each_node_policy_file(tmp_path, monkeypatch):
     ])
     assert json.loads((one/'hs'/'fair-policy.json').read_text()) == a
     assert json.loads((two/'hs'/'fair-policy.json').read_text()) == b
+
+
+def test_node_inventory_caches_static_docker_metadata_but_refreshes_ack(tmp_path, monkeypatch):
+    source = tmp_path / 'node'
+    (source / 'hs').mkdir(parents=True)
+    ack_file = source / 'hs' / 'fair-policy.json.ack'
+    ack_file.write_text(json.dumps({'adapter':'hs-rate-v1','revision':'a'*64,'updated_at':time.time()}))
+    calls = {'ps':0,'inspect':0,'version':0}
+    def fake_run(args, timeout=30):
+        if args[:3] == ['docker','ps','--format']:
+            calls['ps'] += 1
+            return 'c1\tnode\tpasarguard/node:latest\n'
+        if args[:2] == ['docker','inspect']:
+            calls['inspect'] += 1
+            return json.dumps([{'Config':{'Env':['SERVICE_PORT=62050','API_PORT=62051','XRAY_EXECUTABLE_PATH=/var/lib/xray-hs-fair','HS_FAIR_POLICY_FILE=/var/lib/hs/fair-policy.json']},'Mounts':[{'Source':str(source),'Destination':'/var/lib/node'}]}])
+        if args[:2] == ['docker','exec']:
+            calls['version'] += 1
+            return 'Xray 26.3.27\n'
+        raise AssertionError(args)
+    monkeypatch.setattr(agent.shutil,'which',lambda name: '/usr/bin/docker' if name=='docker' else None)
+    monkeypatch.setattr(agent,'run',fake_run)
+    agent._PG_NODE_CACHE.update(at=0.0, rows=[])
+    first = agent.pasarguard_nodes_inventory()
+    ack_file.write_text(json.dumps({'adapter':'hs-rate-v1','revision':'b'*64,'updated_at':time.time()}))
+    second = agent.pasarguard_nodes_inventory()
+    assert calls == {'ps':1,'inspect':1,'version':1}
+    assert first[0]['fair_use']['revision'] == 'a'*64
+    assert second[0]['fair_use']['revision'] == 'b'*64
+
+
+def test_local_panel_reuses_persistent_bridge_process(monkeypatch):
+    class Out:
+        def __init__(self): self.lines=[]
+        def readline(self): return self.lines.pop(0) if self.lines else ''
+    class In:
+        def __init__(self, out): self.out=out; self.pending=''
+        def write(self, value): self.pending += value; return len(value)
+        def flush(self):
+            request=json.loads(self.pending.strip()); self.pending=''
+            self.out.lines.append(json.dumps({'ok':True,'result':{'action':request['action']}})+'\n')
+    class Proc:
+        def __init__(self): self.stdout=Out(); self.stdin=In(self.stdout); self.returncode=None
+        def poll(self): return self.returncode
+        def terminate(self): self.returncode=0
+        def wait(self, timeout=None): return self.returncode
+        def kill(self): self.returncode=-9
+    created=[]
+    def fake_popen(*args, **kwargs):
+        proc=Proc(); created.append(proc); return proc
+    monkeypatch.setattr(agent,'panel_container',lambda:'panel-cid')
+    monkeypatch.setattr(agent.subprocess,'Popen',fake_popen)
+    monkeypatch.setattr(agent.select,'select',lambda read,write,error,timeout:(read,[],[]))
+    agent._close_local_bridge()
+    try:
+        assert agent.local_panel('poll', {'n':1}) == {'action':'poll'}
+        assert agent.local_panel('poll', {'n':2}) == {'action':'poll'}
+        assert len(created) == 1
+    finally:
+        agent._close_local_bridge()
