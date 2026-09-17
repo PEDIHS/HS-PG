@@ -277,19 +277,31 @@
     wire(field, 'host');
   }
 
-  function identifyUser(dialog) {
-    const username = dialog.querySelector('[name=username]')?.value?.trim();
-    if (!username) return '';
-    return String(users.get(username)?.id || '');
+  async function resolveUser(dialog) {
+    const input = dialog.querySelector('[name=username]');
+    const username = input?.value?.trim();
+    if (!username || (!input.disabled && !input.readOnly)) return null;
+    const cached = users.get(username);
+    if (cached?.id) return cached;
+    try {
+      const user = await api('/api/user/' + encodeURIComponent(username));
+      if (user?.id) users.set(username, user);
+      return user?.id ? user : null;
+    } catch {
+      return null;
+    }
   }
 
-  function userField(dialog) {
-    if (dialog.querySelector('#' + USER_ID) || !isUsersRoute()) return;
+  async function userField(dialog) {
+    if (dialog.querySelector('#' + USER_ID) || dialog.dataset.hsUserFairLoading === '1' || !isUsersRoute()) return;
     const form = dialog.querySelector('form');
     const username = form?.querySelector('[name=username]');
     if (!username) return;
-    const id = identifyUser(dialog);
-    if (!id) return; // User-specific Fair Use belongs only in an existing User's Edit dialog.
+    dialog.dataset.hsUserFairLoading = '1';
+    const user = await resolveUser(dialog);
+    delete dialog.dataset.hsUserFairLoading;
+    if (!user || !dialog.isConnected || dialog.querySelector('#' + USER_ID)) return;
+    const id = String(user.id);
     const policy = settings?.user_policies?.[id];
     const field = document.createElement('details');
     field.id = USER_ID;
@@ -301,6 +313,29 @@
     const target = [...form.querySelectorAll('div')].find(element => String(element.className).includes('overflow-y-auto') && String(element.className).includes('max-h-')) || form;
     target.appendChild(field);
     wire(field, 'user');
+    if (!form.dataset.hsUserFairSubmit) {
+      form.dataset.hsUserFairSubmit = '1';
+      form.addEventListener('submit', () => {
+        const current = form.querySelector('#' + USER_ID + '[data-dirty="1"]');
+        if (!current?.dataset.userId) return;
+        let body;
+        try { body = policyData(current, 'user'); }
+        catch (exc) { error(exc.message); return; }
+        current.dataset.dirty = 'saving';
+        queueMicrotask(async () => {
+          try {
+            const path = '/api/hs-services/users/' + current.dataset.userId + '/fair-use';
+            await api(path, body, body ? 'PUT' : 'DELETE');
+            current.dataset.dirty = '0';
+            refreshUsersAfterFairSave();
+            await load();
+          } catch (exc) {
+            current.dataset.dirty = '1';
+            error('User saved, but HS Fair Use failed: ' + exc.message);
+          }
+        });
+      });
+    }
   }
 
   function groupField(dialog) {
@@ -686,26 +721,41 @@
     button.dataset.state = active ? 'on' : 'off';
   }
 
-  function setFairFilter(enabled, navigate = true) {
-    const url = new URL(location.href);
+  async function fairUserIds() {
+    const payload = await api('/api/users?limit=10000&offset=0&hs_fair_limited=true');
+    return [...new Set((payload.users || []).map(user => Number(user.id)).filter(id => Number.isInteger(id) && id > 0))];
+  }
+
+  async function setFairFilter(enabled, navigate = true) {
+    const oldURL = location.href;
+    const url = new URL(oldURL);
     const route = hashParams(url);
-    route.params.delete('hs_fair_limited');
-    for (const key of ['status', 'offset', 'page']) route.params.delete(key);
-    if (url.hash.startsWith('#/')) {
-      const query = route.params.toString();
-      url.hash = route.path + (query ? '?' + query : '');
+    for (const key of ['hs_fair_limited', 'status', 'offset', 'page', 'ids', 'is_id']) route.params.delete(key);
+    for (const key of ['hs_fair_limited', 'status', 'offset', 'page', 'ids', 'is_id']) url.searchParams.delete(key);
+    if (enabled) {
+      let ids = [];
+      try { ids = await fairUserIds(); } catch (exc) { error('Fair Use users could not be loaded: ' + exc.message); return false; }
+      route.params.set('hs_fair_limited', '1');
+      if (ids.length) route.params.set('ids', ids.join(','));
+      else { route.params.set('search', '__hs_no_fair_users__'); route.params.delete('ids'); }
+    } else {
+      route.params.delete('search');
     }
-    for (const key of ['status', 'offset', 'page']) url.searchParams.delete(key);
-    if (enabled) url.searchParams.set('hs_fair_limited', '1'); else url.searchParams.delete('hs_fair_limited');
+    const query = route.params.toString();
+    url.hash = route.path + (query ? '?' + query : '');
     history.replaceState(history.state, '', url.href);
     syncNativeStatusChipsForFair(enabled);
     const button = document.getElementById('hs-fair-filter');
     if (button) styleFairFilterButton(button, enabled);
-    if (navigate) requestAnimationFrame(triggerUsersRefresh);
+    if (navigate) {
+      window.dispatchEvent(new HashChangeEvent('hashchange', {oldURL, newURL: url.href}));
+      requestAnimationFrame(triggerUsersRefresh);
+    }
+    return true;
   }
 
   function clearFairFilter(navigate = false) {
-    setFairFilter(false, navigate);
+    void setFairFilter(false, navigate);
   }
 
   function userFairFilter() {
@@ -731,7 +781,7 @@
         event.stopPropagation();
         const enable = !fairFilterSelected();
         if (enable) clearNativeStatusSelection();
-        setFairFilter(enable, true);
+        void setFairFilter(enable, true);
       });
       group.appendChild(button);
     }
