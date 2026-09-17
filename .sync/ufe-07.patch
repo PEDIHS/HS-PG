@@ -1,0 +1,4 @@
+pre-load /api/users: Edit User must resolve its ID directly from native /api/user/{username}.
+   await page.evaluate(()=>{
+     const d=document.createElement('div');d.setAttribute('role','dialog');
+     d.innerHTML='<form><div class="-mr-4 max-h-[80dvh] overflow-y-auto px-2 pr-4"><input name="username" value="alice" disabled><div>Native User fields</div></div><div class="native-footer"><button type="submit">Save</button></div></form>';
