@@ -1,0 +1,54 @@
+ for p,text in generated.items():compile(text,str(p),'exec');p.write_text(text)
++assert 'def hs_fair_configured(self) -> bool:' in generated[app/'models/user.py']
++assert 'configured_user_ids' in generated[app/'db/crud/user.py']
++assert 'filters.append(or_(manual, enforced))' in generated[app/'db/crud/user.py']
+ assert patch_native(app)=={p:text for p,text in generated.items() if p!=app/'routers/__init__.py'}
+ assert patch_router(generated[app/'routers/__init__.py'])==generated[app/'routers/__init__.py']
+ print('Native subscription, derived status, filters, migration and router hooks compile and are idempotent')
+diff --git a/tests/test_native_integration.py b/tests/test_native_integration.py
+index 6117caa..984c601 100644
+--- a/tests/test_native_integration.py
++++ b/tests/test_native_integration.py
+@@ -78,6 +78,15 @@ def test_always_group_policy_limits_all_group_inbounds(runtime):
+ 
+ 
+ 
++def test_manual_user_configuration_is_visible_before_ack(runtime):
++    from hs_fair_use import validate_policy
++    policy=validate_policy({'mode':'always','threshold_bytes':0,'baseline_mbps':100,'speed_percent':20})
++    store.write('fair-use-users.json',{'1':policy,'bad':policy})
++    assert fair.configured_user_ids()=={1}
++    assert fair.user_configured(Obj(id=1)) is True
++    assert fair.user_configured(Obj(id=2)) is False
++
++
+ def test_user_override_is_immediate_and_keeps_active_host_visibility(runtime):
+     from hs_fair_use import validate_policy
+     policy=validate_policy({'mode':'always','threshold_bytes':0,'baseline_mbps':100,'speed_percent':20})
+diff --git a/tests/user-fair-settings.cjs b/tests/user-fair-settings.cjs
+index b356ad8..08328c5 100644
+--- a/tests/user-fair-settings.cjs
++++ b/tests/user-fair-settings.cjs
+@@ -10,7 +10,7 @@ const fs=require('fs'),path=require('path'),assert=require('node:assert/strict')
+     if(u.pathname==='/api/hs-plugin/state') data={features:{fair_use:{enabled:true}},hosts:[]};
+     else if(u.pathname==='/api/hs-services/fair-use') data={policies:{},group_policies:{},user_policies:saved?{'1':saved}:{},fair_status_hosts:[],shared_hosts:{},groups:[],enforcement_available:true};
+     else if(u.pathname==='/api/groups') data={groups:[]};
+-    else if(u.pathname==='/api/users') data={users:[{id:1,username:'alice',status:'active',hs_status:fair?'fair_limited':'active'}],hs_fair_use_enabled:true};
++    else if(u.pathname==='/api/users') data={users:[{id:1,username:'alice',status:'active',hs_status:'active',hs_fair_configured:fair}],hs_fair_use_enabled:true};
+     else if(u.pathname==='/api/user/alice'){nativeSaves++;data={id:1,username:'alice',status:'active'};}
+     else if(u.pathname==='/api/hs-services/users/1/fair-use' && route.request().method()==='PUT'){
+       saved=route.request().postDataJSON();fair=true;data={user_id:1,policy:{...saved,mode:'always',threshold_bytes:0}};
+@@ -39,7 +39,12 @@ const fs=require('fs'),path=require('path'),assert=require('node:assert/strict')
+   await page.locator('#hs-user-fair-use [data-fair=base]').fill('120');
+   await page.locator('#hs-user-fair-use [data-fair=percent]').fill('25');
+   await Promise.all([page.waitForResponse(r=>r.url().endsWith('/users/1/fair-use')&&r.request().method()==='PUT'),page.locator('form button[type=submit]').click()]);
+-  assert.equal(nativeSaves,1); assert.deepEqual(saved,{mode:'always',threshold_bytes:0,baseline_mbps:120,speed_percent:25});  await page.waitForTimeout(80);
++  assert.equal(nativeSaves,1); assert.deepEqual(saved,{mode:'always',threshold_bytes:0,baseline_mbps:120,speed_percent:25});
++  await page.evaluate(()=>{const table=document.createElement('table');table.innerHTML='<tbody><tr><td><span>alice</span></td><td><span class="pointer-events-none rounded-full bg-emerald-500/10 text-emerald-700">Active</span></td></tr></tbody>';document.body.appendChild(table);return fetch('/api/users');});
++  await page.waitForSelector('[data-hs-fair-badge]');
++  assert((await page.locator('[data-hs-fair-badge]').innerText()).includes('Fair Use'));
++  assert.equal(await page.locator('[data-hs-fair-badge] .hs-fair-split-native').innerText(),'Active');
++  await page.waitForTimeout(80);
+   await page.locator('#hs-user-fair-use [data-fair-switch]').click();
+   assert.equal(await page.locator('#hs-user-fair-use').getAttribute('data-enabled'),'0');
+   await Promise.all([page.waitForResponse(r=>r.url().endsWith('/users/1/fair-use')&&r.request().method()==='DELETE'),page.locator('form button[type=submit]').click()]);
