@@ -4,8 +4,9 @@
   const HOST_ID = 'hs-host-fair-use';
   const GROUP_ID = 'hs-group-fair-use';
   const GROUP_BAR_ID = 'hs-host-group-bar';
+  const STYLE_ID = 'hs-host-fair-style';
   const FAIR_STATUS = 'fair_limited';
-  const input = 'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
+  const input = 'border-border bg-input placeholder:text-input-placeholder focus-visible:ring-ring flex h-9 w-full rounded-lg border px-3 py-2 text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
 
   let raw = window.fetch.bind(window);
   let state = null;
@@ -16,8 +17,81 @@
   let reloadQueued = false;
   let listEnabled = false;
   let activeHostStatusField = null;
+  let fairRefreshClick = false;
   let fairStatusHosts = new Set();
   const users = new Map();
+
+
+  const hsTagMarkup = () => '<span class="hs-fair-hs-tag" aria-label="HS Plugin">HS</span>';
+  const checkIcon = () => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+
+  const css = `
+    .hs-fair-hs-tag{display:inline-flex;height:18px;min-width:22px;align-items:center;justify-content:center;border:1px solid rgba(212,167,44,.28);border-radius:999px;padding:0 6px;background:rgba(212,167,44,.075);color:#b18422;font-size:9px;font-weight:700;line-height:1;letter-spacing:.04em;vertical-align:middle}
+    .hs-fair-section{overflow:hidden;background:hsl(var(--card)/.35);transition:border-color .18s,background-color .18s}
+    .hs-fair-section[open]{border-color:hsl(var(--border));background:hsl(var(--card)/.58)}
+    .hs-fair-summary{list-style:none;user-select:none}
+    .hs-fair-summary::-webkit-details-marker{display:none}
+    .hs-fair-summary-title{display:flex;min-width:0;align-items:center;gap:.5rem}
+    .hs-fair-summary-meta{margin-inline-start:auto;display:flex;align-items:center;gap:.5rem}
+    .hs-fair-summary-state{border-radius:999px;padding:.16rem .45rem;background:hsl(var(--muted)/.55);color:hsl(var(--muted-foreground));font-size:10px;font-weight:600}
+    .hs-fair-summary-state[data-state=on]{background:rgba(34,197,94,.1);color:#16a34a}
+    .hs-fair-chevron{color:hsl(var(--muted-foreground));font-size:12px;transition:transform .18s ease}
+    .hs-fair-section[open] .hs-fair-chevron{transform:rotate(180deg)}
+    .hs-fair-body{border-top:1px solid hsl(var(--border)/.65);padding:14px 2px 16px}
+    .hs-fair-enable-row{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid hsl(var(--border)/.75);border-radius:10px;background:hsl(var(--muted)/.22);padding:12px}
+    .hs-fair-enable-copy{min-width:0}
+    .hs-fair-enable-title{font-size:13px;font-weight:600;color:hsl(var(--foreground))}
+    .hs-fair-enable-help{margin-top:3px;color:hsl(var(--muted-foreground));font-size:11px;line-height:1.45}
+    .hs-fair-switch{display:inline-flex;height:20px;width:36px;flex:none;align-items:center;border:2px solid transparent;border-radius:999px;background:hsl(var(--input));box-shadow:0 1px 2px rgba(0,0,0,.06);cursor:pointer;transition:background-color .16s;outline:none}
+    .hs-fair-switch:focus-visible{box-shadow:0 0 0 2px hsl(var(--ring))}
+    .hs-fair-switch[data-state=checked]{background:hsl(var(--primary))}
+    .hs-fair-switch-thumb{display:block;height:16px;width:16px;border-radius:999px;background:hsl(var(--background));box-shadow:0 1px 3px rgba(0,0,0,.25);transform:translateX(0);transition:transform .16s}
+    .hs-fair-switch[data-state=checked] .hs-fair-switch-thumb{transform:translateX(16px)}
+    [dir=rtl] .hs-fair-switch[data-state=checked] .hs-fair-switch-thumb{transform:translateX(-16px)}
+    .hs-fair-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;margin-top:14px}
+    .hs-fair-control{display:flex;min-width:0;flex-direction:column;gap:5px}
+    .hs-fair-control[data-disabled=true]{opacity:.58}
+    .hs-fair-label{font-size:11px;font-weight:600;color:hsl(var(--foreground))}
+    .hs-fair-help{color:hsl(var(--muted-foreground));font-size:10px;line-height:1.35}
+    .hs-fair-rate{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;border-radius:9px;background:hsl(var(--muted)/.3);padding:9px 11px;color:hsl(var(--muted-foreground));font-size:11px}
+    .hs-fair-rate strong{color:hsl(var(--foreground));font-weight:650;font-variant-numeric:tabular-nums}
+    .hs-fair-note{margin-top:10px;border-inline-start:2px solid rgba(212,167,44,.32);padding:3px 0 3px 10px;color:hsl(var(--muted-foreground));font-size:10.5px;line-height:1.5}
+    [dir=rtl] .hs-fair-note{padding:3px 10px 3px 0}
+    .hs-fair-save-note{margin-top:10px;color:hsl(var(--muted-foreground));font-size:10.5px}
+    .hs-fair-status-option .hs-fair-hs-tag{margin-inline-start:auto;margin-inline-end:4px}
+    .hs-fair-status-option [data-hs-fair-checkbox] svg{width:13px;height:13px;color:hsl(var(--primary-foreground))}
+    [data-hs-fair-status-badge] .hs-fair-hs-tag,[data-hs-fair-badge] .hs-fair-hs-tag{height:16px;min-width:20px;padding:0 5px;font-size:8px}
+    .hs-fair-split-badge{display:inline-flex!important;align-items:stretch!important;overflow:hidden!important;border:0!important;border-radius:999px!important;background:transparent!important;padding:0!important;box-shadow:0 0 0 1px hsl(var(--border)/.22)!important}
+    .hs-fair-split-native,.hs-fair-split-limit{display:inline-flex;min-height:24px;align-items:center;justify-content:center;gap:4px;padding:0 8px;font-size:11px;font-weight:600;line-height:1;white-space:nowrap}
+    .hs-fair-split-native{border-radius:999px 0 0 999px!important}
+    .hs-fair-split-limit{border-radius:0 999px 999px 0;background:rgba(249,115,22,.12);color:#c2410c}
+    .dark .hs-fair-split-limit{color:#fdba74}
+    [dir=rtl] .hs-fair-split-native{border-radius:0 999px 999px 0!important}
+    [dir=rtl] .hs-fair-split-limit{border-radius:999px 0 0 999px}
+    .hs-fair-split-limit .hs-fair-hs-tag{border-color:rgba(249,115,22,.3);background:rgba(249,115,22,.08);color:currentColor}
+    #${GROUP_BAR_ID} .hs-fair-hs-tag{height:16px;min-width:20px;font-size:8px}
+    #hs-fair-filter .hs-fair-hs-tag{height:15px;min-width:18px;margin-inline-start:5px;padding:0 4px;font-size:7.5px}
+    @media(min-width:640px){.hs-fair-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hs-fair-section[data-kind=host] .hs-fair-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+    @media(prefers-reduced-motion:reduce){.hs-fair-chevron,.hs-fair-switch,.hs-fair-switch-thumb{transition:none}}
+  `;
+
+  function injectStyle() {
+    let style = document.getElementById(STYLE_ID);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = STYLE_ID;
+      document.head.appendChild(style);
+    }
+    if (style.textContent !== css) style.textContent = css;
+  }
+
+  function hsTagElement() {
+    const tag = document.createElement('span');
+    tag.className = 'hs-fair-hs-tag';
+    tag.setAttribute('aria-label', 'HS Plugin');
+    tag.textContent = 'HS';
+    return tag;
+  }
 
   const headers = () => {
     const h = {'Content-Type': 'application/json'};
@@ -116,25 +190,70 @@
     const mode = kind === 'group' ? (q('mode')?.value || 'always') : 'threshold';
     field.dataset.enabled = enabled ? '1' : '0';
     toggle?.setAttribute('aria-checked', String(enabled));
+
+    const switchButton = field.querySelector('[data-fair-switch]');
+    if (switchButton) {
+      switchButton.dataset.state = enabled ? 'checked' : 'unchecked';
+      switchButton.setAttribute('aria-checked', String(enabled));
+    }
+    const summaryState = field.querySelector('[data-fair-summary-state]');
+    if (summaryState) {
+      summaryState.textContent = enabled ? 'Enabled' : 'Off';
+      summaryState.dataset.state = enabled ? 'on' : 'off';
+    }
+
     if (q('gb')) q('gb').disabled = !enabled || mode === 'always';
     for (const name of ['base', 'percent']) if (q(name)) q(name).disabled = !enabled;
     if (q('mode')) q('mode').disabled = !enabled;
-    const rate = Number(q('base')?.value || 0) * Number(q('percent')?.value || 0) / 100;
-    field.querySelector('[data-rate]').textContent = enabled
-      ? `Fair Use enabled · ${Number(q('base').value)} Mbps × ${Number(q('percent').value)}% = ${rate.toFixed(2)} Mbps`
-      : 'Fair Use disabled';
+    for (const control of field.querySelectorAll('.hs-fair-control')) {
+      const name = control.querySelector('[data-fair]')?.dataset.fair;
+      const disabled = !enabled || (name === 'gb' && mode === 'always');
+      control.dataset.disabled = disabled ? 'true' : 'false';
+    }
+
+    const base = Number(q('base')?.value || 0);
+    const percent = Number(q('percent')?.value || 0);
+    const rate = base * percent / 100;
+    const rateBox = field.querySelector('[data-rate]');
+    if (rateBox) {
+      rateBox.innerHTML = enabled
+        ? `<span>Effective limited speed</span><strong>${rate.toFixed(2)} Mbps · ${percent}%</strong>`
+        : '<span>Fair Use is disabled</span><strong>Full speed</strong>';
+    }
   }
 
   function wire(field, kind) {
     updateField(field, kind);
-    field.querySelectorAll('input,select,label').forEach(element => element.addEventListener('click', event => event.stopPropagation()));
+    field.querySelectorAll('input,select,label,button[data-fair-switch]').forEach(element => element.addEventListener('click', event => event.stopPropagation()));
+    const hidden = field.querySelector('[data-fair=enabled]');
+    const switchButton = field.querySelector('[data-fair-switch]');
+    switchButton?.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!hidden) return;
+      hidden.checked = !hidden.checked;
+      hidden.dispatchEvent(new Event('change', {bubbles: true}));
+    });
     const dirty = () => {
       field.dataset.dirty = '1';
       updateField(field, kind);
-      field.querySelector('[data-result]').textContent = 'Will be saved with ' + (kind === 'group' ? 'Group' : 'Host') + '.';
+      const result = field.querySelector('[data-result]');
+      if (result) result.textContent = 'Will be saved with ' + (kind === 'group' ? 'Group' : 'Host') + '.';
     };
     field.addEventListener('input', dirty);
     field.addEventListener('change', dirty);
+  }
+
+  function fairSummary(kind, enabled) {
+    return `<summary class="hs-fair-summary flex cursor-pointer items-center gap-2 py-4 text-sm font-medium"><span class="hs-fair-summary-title"><span>Fair Use</span>${hsTagMarkup()}</span><span class="hs-fair-summary-meta"><span class="hs-fair-summary-state" data-fair-summary-state data-state="${enabled?'on':'off'}">${enabled?'Enabled':'Off'}</span><span class="hs-fair-chevron">⌄</span></span></summary>`;
+  }
+
+  function fairToggle(label, help, enabled) {
+    return `<div class="hs-fair-enable-row"><div class="hs-fair-enable-copy"><div class="hs-fair-enable-title">${label}</div><div class="hs-fair-enable-help">${help}</div></div><input class="sr-only" type="checkbox" data-fair="enabled" ${enabled?'checked':''}><button type="button" class="hs-fair-switch" role="switch" data-fair-switch data-state="${enabled?'checked':'unchecked'}" aria-checked="${enabled?'true':'false'}" aria-label="${label}"><span class="hs-fair-switch-thumb"></span></button></div>`;
+  }
+
+  function fairControl(label, help, control) {
+    return `<label class="hs-fair-control"><span class="hs-fair-label">${label}</span>${control}<span class="hs-fair-help">${help}</span></label>`;
   }
 
   function hostField(dialog) {
@@ -145,8 +264,13 @@
     const field = document.createElement('details');
     field.id = HOST_ID;
     field.dataset.hostId = id;
-    field.className = 'rounded-sm border px-4';
-    field.innerHTML = `<summary class="flex cursor-pointer items-center gap-2 py-4 text-sm font-medium">Fair Use <span class="hs-gold text-xs">HS</span><span style="margin-inline-start:auto">⌄</span></summary><div class="space-y-4 pb-4"><label class="flex items-center gap-2 text-sm"><input type="checkbox" data-fair="enabled" ${policy?'checked':''}> Enable Fair Use</label><div class="grid gap-3 sm:grid-cols-3"><label class="space-y-2 text-xs">After traffic (GB)<input class="${input}" type="number" min="0.001" step="0.001" data-fair="gb" value="${policy?policy.threshold_bytes/1e9:100}"></label><label class="space-y-2 text-xs">Full speed (Mbps)<input class="${input}" type="number" min="0.1" max="100000" step="0.1" data-fair="base" value="${policy?.baseline_mbps||100}"></label><label class="space-y-2 text-xs">Limited speed (%)<input class="${input}" type="number" min="1" max="100" data-fair="percent" value="${policy?.speed_percent||20}"></label></div><p class="text-muted-foreground text-xs" data-rate></p><p class="text-muted-foreground text-xs">${shared.length>1?`Shared inbound: this policy is automatically identical on all ${shared.length} Hosts using it.`:'This policy belongs to the Host inbound. If another Host uses the same inbound later, it inherits the same policy.'}</p><p class="text-muted-foreground text-xs">Each user's charged traffic is evaluated separately. Resetting that user's traffic restores full speed until the threshold is reached again.</p><p class="text-muted-foreground text-xs">${settings?.enforcement_available?'HS rate adapter connected.':'Node setup required: HS-enabled Xray core and HS service agent.'}</p><p role="status" class="text-xs" data-result>${id?'Changes are saved by the normal Host Save button.':'Create the Host with the normal Save button; Fair Use is saved with it.'}</p></div>`;
+    field.dataset.kind = 'host';
+    field.className = 'hs-fair-section rounded-sm border px-4';
+    const enabled = !!policy;
+    const sharedText = shared.length > 1
+      ? `Shared inbound · the same policy is kept in sync across all ${shared.length} Hosts using this inbound.`
+      : 'Inbound policy · another Host using this inbound will inherit the same Fair Use values.';
+    field.innerHTML = `${fairSummary('host', enabled)}<div class="hs-fair-body">${fairToggle('Enable Fair Use','Limit this Host only after each user reaches the configured charged-traffic threshold.',enabled)}<div class="hs-fair-grid">${fairControl('After traffic','Per-user charged traffic before limiting.',`<input class="${input}" type="number" min="0.001" step="0.001" data-fair="gb" value="${policy?policy.threshold_bytes/1e9:100}">`)}${fairControl('Full speed','Baseline speed before the threshold.',`<input class="${input}" type="number" min="0.1" max="100000" step="0.1" data-fair="base" value="${policy?.baseline_mbps||100}">`)}${fairControl('Limited speed','Percentage of baseline kept after the threshold.',`<div class="relative"><input class="${input} pr-8" type="number" min="1" max="100" data-fair="percent" value="${policy?.speed_percent||20}"><span class="text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs">%</span></div>`)}</div><div class="hs-fair-rate" data-rate></div><div class="hs-fair-note">${sharedText}<br>Traffic reset restores full speed until that user reaches the threshold again. ${settings?.enforcement_available?'HS rate adapter is connected.':'Node setup is required for enforcement.'}</div><p role="status" class="hs-fair-save-note" data-result>${id?'Saved together with the normal Host Save button.':'Create the Host first; Fair Use will be saved with it.'}</p></div>`;
     const target = [...form.querySelectorAll('div')].find(element => element.children.length > 1 && String(element.className).includes('overflow-y-auto')) || form;
     target.appendChild(field);
     wire(field, 'host');
@@ -160,8 +284,10 @@
     const field = document.createElement('details');
     field.id = GROUP_ID;
     field.dataset.groupId = id;
-    field.className = 'rounded-sm border px-4';
-    field.innerHTML = `<summary class="flex cursor-pointer items-center gap-2 py-4 text-sm font-medium">Fair Use <span class="hs-gold text-xs">HS</span><span style="margin-inline-start:auto">⌄</span></summary><div class="space-y-4 pb-4"><label class="flex items-center gap-2 text-sm"><input type="checkbox" data-fair="enabled" ${policy?'checked':''}> Limit users in this Group</label><div class="grid gap-3 sm:grid-cols-4"><label class="space-y-2 text-xs">Mode<select class="${input}" data-fair="mode"><option value="always" ${policy?.mode==='always'?'selected':''}>Always</option><option value="threshold" ${policy?.mode==='threshold'?'selected':''}>After usage</option></select></label><label class="space-y-2 text-xs">Traffic (GB)<input class="${input}" type="number" min="0.001" step="0.001" data-fair="gb" value="${policy?.mode==='threshold'?policy.threshold_bytes/1e9:100}"></label><label class="space-y-2 text-xs">Full speed (Mbps)<input class="${input}" type="number" min="0.1" max="100000" step="0.1" data-fair="base" value="${policy?.baseline_mbps||100}"></label><label class="space-y-2 text-xs">Limited speed (%)<input class="${input}" type="number" min="1" max="100" data-fair="percent" value="${policy?.speed_percent||33}"></label></div><p class="text-muted-foreground text-xs" data-rate></p><p class="text-muted-foreground text-xs">Always applies the cap immediately. After usage applies it only after each user's own charged traffic reaches the threshold.</p><p class="text-muted-foreground text-xs">The Group policy applies to every inbound assigned to this Group. If Host and Group policies overlap, the strictest active speed cap wins.</p><p role="status" class="text-xs" data-result>${id?'Changes are saved by the normal Group Save button.':'Create the Group with the normal Save button; Fair Use is saved with it.'}</p></div>`;
+    field.dataset.kind = 'group';
+    field.className = 'hs-fair-section rounded-sm border px-4';
+    const enabled = !!policy;
+    field.innerHTML = `${fairSummary('group', enabled)}<div class="hs-fair-body">${fairToggle('Enable Fair Use for Group','Apply one shared rule to every inbound assigned to this Group.',enabled)}<div class="hs-fair-grid">${fairControl('Mode','Always limits immediately; After usage waits for each user threshold.',`<select class="${input}" data-fair="mode"><option value="always" ${policy?.mode==='always'?'selected':''}>Always</option><option value="threshold" ${policy?.mode==='threshold'?'selected':''}>After usage</option></select>`)}${fairControl('Traffic threshold','Used only when Mode is After usage.',`<input class="${input}" type="number" min="0.001" step="0.001" data-fair="gb" value="${policy?.mode==='threshold'?policy.threshold_bytes/1e9:100}">`)}${fairControl('Full speed','Baseline speed before the Group cap.',`<input class="${input}" type="number" min="0.1" max="100000" step="0.1" data-fair="base" value="${policy?.baseline_mbps||100}">`)}${fairControl('Limited speed','Percentage of baseline retained while limited.',`<div class="relative"><input class="${input} pr-8" type="number" min="1" max="100" data-fair="percent" value="${policy?.speed_percent||33}"><span class="text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs">%</span></div>`)}</div><div class="hs-fair-rate" data-rate></div><div class="hs-fair-note">The Group rule covers all assigned inbounds. If a Host rule and Group rule overlap, the strictest active speed cap wins.</div><p role="status" class="hs-fair-save-note" data-result>${id?'Saved together with the normal Group Save button.':'Create the Group first; Fair Use will be saved with it.'}</p></div>`;
     const target = [...form.querySelectorAll('div')].find(element => String(element.className).includes('overflow-y-auto') && String(element.className).includes('max-h-')) || form;
     target.appendChild(field);
     wire(field, 'group');
@@ -209,7 +335,9 @@
         const badge = document.createElement('span');
         badge.dataset.hsFairStatusBadge = '1';
         badge.className = nativeBadge?.className || 'bg-muted/80 flex items-center gap-2 rounded-md px-2 py-1 text-sm';
-        badge.append('Fair limited');
+        const label = document.createElement('span');
+        label.textContent = 'Fair limited';
+        badge.append(label, hsTagElement());
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'hover:text-destructive';
@@ -251,8 +379,9 @@
   function updateFairStatusOption() {
     const field = activeHostStatusField;
     if (!field || !document.body.contains(field)) { activeHostStatusField = null; return; }
-    const native = [...document.querySelectorAll('[role=option]')].find(option =>
+    const natives = [...document.querySelectorAll('[role=option]')].filter(option =>
       !option.dataset.hsFairStatusOption && /^(active|فعال|disabled|غیرفعال|limited|محدود|expired|منقضی شده|on hold|در انتظار)$/i.test(option.textContent.trim()));
+    const native = natives.find(option => option.querySelector('[role=checkbox][data-state="unchecked"]')) || natives[0];
     if (!native) return;
     const parent = native.parentElement;
     if (!parent) return;
@@ -260,12 +389,32 @@
     if (!option) {
       option = native.cloneNode(true);
       option.dataset.hsFairStatusOption = '1';
+      option.classList.add('hs-fair-status-option');
       option.removeAttribute('id');
       option.removeAttribute('data-disabled');
       option.removeAttribute('aria-disabled');
       option.removeAttribute('disabled');
-      const label = option.querySelector('span.text-sm') || [...option.querySelectorAll('span')].at(-1);
-      if (label) label.textContent = 'Fair limited'; else option.textContent = 'Fair limited';
+
+      const outerIndicator = [...option.children].find(child => child.tagName === 'SPAN' && String(child.className).includes('absolute'));
+      outerIndicator?.replaceChildren();
+      const content = option.querySelector('div.flex.w-full') || option.querySelector('div');
+      let checkbox = content?.querySelector('[role=checkbox]') || option.querySelector('[role=checkbox]');
+      const label = content?.querySelector('span.text-sm') || [...option.querySelectorAll('span')].at(-1);
+      if (checkbox) {
+        checkbox.dataset.hsFairCheckbox = '1';
+        checkbox.removeAttribute('disabled');
+        checkbox.removeAttribute('data-disabled');
+        checkbox.replaceChildren();
+        checkbox.dataset.state = 'unchecked';
+        checkbox.setAttribute('aria-checked', 'false');
+      }
+      if (label) label.textContent = 'Fair limited';
+      if (content) {
+        content.querySelector('.hs-fair-hs-tag')?.remove();
+        content.appendChild(hsTagElement());
+      } else if (label) {
+        label.after(hsTagElement());
+      }
       option.addEventListener('pointerdown', event => {
         event.preventDefault();
         event.stopPropagation();
@@ -277,11 +426,13 @@
     }
     const checked = field.dataset.hsFairSelected === '1';
     option.setAttribute('aria-selected', String(checked));
-    option.dataset.state = checked ? 'checked' : 'unchecked';
-    const checkbox = option.querySelector('[role=checkbox]');
+    option.dataset.hsSelected = checked ? '1' : '0';
+    const checkbox = option.querySelector('[data-hs-fair-checkbox]') || option.querySelector('[role=checkbox]');
     if (checkbox) {
       checkbox.setAttribute('aria-checked', String(checked));
       checkbox.dataset.state = checked ? 'checked' : 'unchecked';
+      checkbox.replaceChildren();
+      if (checked) checkbox.innerHTML = checkIcon();
     }
   }
 
@@ -355,7 +506,7 @@
       bar.replaceChildren();
       const title = document.createElement('span');
       title.className = 'text-muted-foreground shrink-0 px-1 text-xs font-medium';
-      title.textContent = 'Groups';
+      title.append('Groups ', hsTagElement());
       bar.appendChild(title);
       const buttonClass = 'inline-flex h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-3 text-sm font-medium shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
       const make = (value, label, count) => {
@@ -390,11 +541,19 @@
         if (!badge.hasAttribute('data-hs-original-display')) badge.dataset.hsOriginalDisplay = badge.style.display;
         badge.style.display = 'none';
         if (!previous) {
-          const fair = badge.cloneNode(true);
-          fair.removeAttribute('data-hs-original-display');
+          const fair = document.createElement('span');
           fair.dataset.hsFairBadge = '1';
-          fair.style.display = '';
-          fair.textContent = 'Fair limited';
+          fair.className = 'hs-fair-split-badge';
+          const native = badge.cloneNode(true);
+          native.removeAttribute('data-hs-original-display');
+          native.classList.add('hs-fair-split-native');
+          native.style.display = '';
+          const limited = document.createElement('span');
+          limited.className = 'hs-fair-split-limit';
+          const label = document.createElement('span');
+          label.textContent = 'Fair Use';
+          limited.append(label, hsTagElement());
+          fair.append(native, limited);
           badge.after(fair);
         }
       } else {
@@ -417,58 +576,139 @@
     return hashParams(url).params.has('hs_fair_limited');
   }
 
+  function statusChipGroup() {
+    const pattern = /^(Active|فعال|Disabled|غیرفعال|Limited|محدود|Expired|منقضی شده|On Hold|در انتظار)$/i;
+    for (const group of document.querySelectorAll('div')) {
+      if (group.closest('[role=dialog]')) continue;
+      const buttons = [...group.children].filter(child => child.tagName === 'BUTTON' && pattern.test(child.textContent.trim()));
+      if (buttons.length >= 3) return {group, buttons};
+    }
+    return null;
+  }
+
+  function nativeStatusSelected(button) {
+    const className = String(button.className);
+    return !className.includes('text-muted-foreground') && !className.includes('bg-transparent');
+  }
+
+  function clearNativeStatusSelection() {
+    const found = statusChipGroup();
+    const selected = found?.buttons.find(nativeStatusSelected);
+    if (!selected) return false;
+    fairRefreshClick = true;
+    selected.click();
+    queueMicrotask(() => { fairRefreshClick = false; });
+    return true;
+  }
+
+  function syncNativeStatusChipsForFair(active) {
+    const found = statusChipGroup();
+    if (!found) return;
+    const {buttons} = found;
+    const inactive = buttons.find(button => String(button.className).includes('text-muted-foreground'));
+    const inactiveClass = inactive?.className || '';
+    for (const button of buttons) {
+      if (active) {
+        if (inactiveClass) button.className = inactiveClass;
+        button.setAttribute('aria-pressed', 'false');
+        button.dataset.hsFairMuted = '1';
+      } else if (button.dataset.hsFairMuted === '1') {
+        if (inactiveClass) button.className = inactiveClass;
+        button.setAttribute('aria-pressed', 'false');
+        delete button.dataset.hsFairMuted;
+      }
+    }
+  }
+
+  function triggerUsersRefresh() {
+    const refresh = [...document.querySelectorAll('button')].find(button =>
+      !button.disabled && (button.querySelector('svg.lucide-refresh-cw') || /refresh/i.test(button.getAttribute('aria-label') || '') || /refresh/i.test(button.title || '')));
+    if (refresh) {
+      refresh.click();
+      return true;
+    }
+    const found = statusChipGroup();
+    const fallback = found?.buttons.find(button => /^(Active|فعال)$/i.test(button.textContent.trim())) || found?.buttons[0];
+    if (fallback) {
+      fairRefreshClick = true;
+      fallback.click();
+      queueMicrotask(() => { fairRefreshClick = false; });
+      return true;
+    }
+    return false;
+  }
+
+  function fairFilterBaseClass(button) {
+    return String(button.className).split(/\s+/).filter(token =>
+      token && !['text-muted-foreground','bg-transparent'].includes(token) && token !== 'hover:bg-accent').join(' ');
+  }
+
+  function styleFairFilterButton(button, active) {
+    const base = button.dataset.hsFairBaseClass || fairFilterBaseClass(button);
+    button.dataset.hsFairBaseClass = base;
+    button.className = `${base} ${active ? 'border-0 bg-orange-500/10 text-orange-700 dark:text-orange-300' : 'text-muted-foreground hover:bg-accent bg-transparent'}`.trim();
+    button.setAttribute('aria-pressed', String(active));
+    button.dataset.state = active ? 'on' : 'off';
+  }
+
   function setFairFilter(enabled, navigate = true) {
     const url = new URL(location.href);
+    const route = hashParams(url);
+    route.params.delete('hs_fair_limited');
+    for (const key of ['status', 'offset', 'page']) route.params.delete(key);
     if (url.hash.startsWith('#/')) {
-      const route = hashParams(url);
-      url.searchParams.delete('hs_fair_limited');
-      if (enabled) route.params.set('hs_fair_limited', '1'); else route.params.delete('hs_fair_limited');
-      for (const key of ['status', 'offset', 'page']) route.params.delete(key);
       const query = route.params.toString();
       url.hash = route.path + (query ? '?' + query : '');
-    } else {
-      if (enabled) url.searchParams.set('hs_fair_limited', '1'); else url.searchParams.delete('hs_fair_limited');
-      for (const key of ['status', 'offset', 'page']) url.searchParams.delete(key);
     }
-    if (navigate) location.assign(url.href); else history.replaceState(history.state, '', url.href);
+    for (const key of ['status', 'offset', 'page']) url.searchParams.delete(key);
+    if (enabled) url.searchParams.set('hs_fair_limited', '1'); else url.searchParams.delete('hs_fair_limited');
+    history.replaceState(history.state, '', url.href);
+    syncNativeStatusChipsForFair(enabled);
+    const button = document.getElementById('hs-fair-filter');
+    if (button) styleFairFilterButton(button, enabled);
+    if (navigate) requestAnimationFrame(triggerUsersRefresh);
   }
 
   function clearFairFilter(navigate = false) {
     setFairFilter(false, navigate);
-    const button = document.getElementById('hs-fair-filter');
-    if (button) { button.setAttribute('aria-pressed', 'false'); button.dataset.state = 'off'; }
   }
 
   function userFairFilter() {
-    const existing = document.getElementById('hs-fair-filter');
-    if (existing) {
-      const active = fairFilterSelected();
-      existing.setAttribute('aria-pressed', String(active));
-      existing.dataset.state = active ? 'on' : 'off';
-      return;
-    }
-    const activeButton = [...document.querySelectorAll('button')].find(button =>
-      /^(Active|فعال)$/i.test(button.textContent.trim()) && button.parentElement?.querySelectorAll(':scope>button').length >= 5);
-    if (!activeButton) return;
-    const group = activeButton.parentElement;
-    const button = activeButton.cloneNode(true);
-    button.id = 'hs-fair-filter';
-    button.type = 'button';
-    button.textContent = 'Fair limited';
-    button.removeAttribute('disabled');
-    button.removeAttribute('data-disabled');
+    const found = statusChipGroup();
+    if (!found) return;
+    const {group, buttons} = found;
+    let button = document.getElementById('hs-fair-filter');
     const active = fairFilterSelected();
-    button.setAttribute('aria-pressed', String(active));
-    button.dataset.state = active ? 'on' : 'off';
-    button.onclick = event => { event.preventDefault(); event.stopPropagation(); setFairFilter(!fairFilterSelected(), true); };
+    if (!button) {
+      const source = buttons.find(item => String(item.className).includes('text-muted-foreground')) || buttons[0];
+      if (!source) return;
+      button = source.cloneNode(false);
+      button.id = 'hs-fair-filter';
+      button.type = 'button';
+      button.removeAttribute('disabled');
+      button.removeAttribute('data-disabled');
+      button.dataset.hsFairBaseClass = fairFilterBaseClass(source);
+      const label = document.createElement('span');
+      label.textContent = 'Fair Use';
+      button.append(label, hsTagElement());
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const enable = !fairFilterSelected();
+        if (enable) clearNativeStatusSelection();
+        setFairFilter(enable, true);
+      });
+      group.appendChild(button);
+    }
+    styleFairFilterButton(button, active);
+    syncNativeStatusChipsForFair(active);
     if (!group.dataset.hsFairCapture) {
       group.dataset.hsFairCapture = '1';
       group.addEventListener('click', event => {
-        const native = event.target.closest('button');
-        if (native && native.parentElement === group && native.id !== 'hs-fair-filter') clearFairFilter(false);
+        const native = event.target.closest?.('button');
+        if (!fairRefreshClick && native && native.parentElement === group && native.id !== 'hs-fair-filter') clearFairFilter(false);
       }, true);
     }
-    group.appendChild(button);
   }
 
   function scan() {
@@ -520,6 +760,7 @@
   }
 
   function boot() {
+    injectStyle();
     raw = window.fetch.bind(window);
     window.fetch = async (inputValue, init = {}) => {
       let url = new URL(typeof inputValue === 'string' ? inputValue : inputValue.url, location.origin);
