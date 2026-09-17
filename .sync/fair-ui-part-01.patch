@@ -1,0 +1,90 @@
++  }
++
++  function hsTagElement() {
++    const tag = document.createElement('span');
++    tag.className = 'hs-fair-hs-tag';
++    tag.setAttribute('aria-label', 'HS Plugin');
++    tag.textContent = 'HS';
++    return tag;
++  }
++
+   const headers = () => {
+     const h = {'Content-Type': 'application/json'};
+     const token = localStorage.getItem('token');
+@@ -116,27 +182,72 @@
+     const mode = kind === 'group' ? (q('mode')?.value || 'always') : 'threshold';
+     field.dataset.enabled = enabled ? '1' : '0';
+     toggle?.setAttribute('aria-checked', String(enabled));
++
++    const switchButton = field.querySelector('[data-fair-switch]');
++    if (switchButton) {
++      switchButton.dataset.state = enabled ? 'checked' : 'unchecked';
++      switchButton.setAttribute('aria-checked', String(enabled));
++    }
++    const summaryState = field.querySelector('[data-fair-summary-state]');
++    if (summaryState) {
++      summaryState.textContent = enabled ? 'Enabled' : 'Off';
++      summaryState.dataset.state = enabled ? 'on' : 'off';
++    }
++
+     if (q('gb')) q('gb').disabled = !enabled || mode === 'always';
+     for (const name of ['base', 'percent']) if (q(name)) q(name).disabled = !enabled;
+     if (q('mode')) q('mode').disabled = !enabled;
+-    const rate = Number(q('base')?.value || 0) * Number(q('percent')?.value || 0) / 100;
+-    field.querySelector('[data-rate]').textContent = enabled
+-      ? `Fair Use enabled · ${Number(q('base').value)} Mbps × ${Number(q('percent').value)}% = ${rate.toFixed(2)} Mbps`
+-      : 'Fair Use disabled';
++    for (const control of field.querySelectorAll('.hs-fair-control')) {
++      const name = control.querySelector('[data-fair]')?.dataset.fair;
++      const disabled = !enabled || (name === 'gb' && mode === 'always');
++      control.dataset.disabled = disabled ? 'true' : 'false';
++    }
++
++    const base = Number(q('base')?.value || 0);
++    const percent = Number(q('percent')?.value || 0);
++    const rate = base * percent / 100;
++    const rateBox = field.querySelector('[data-rate]');
++    if (rateBox) {
++      rateBox.innerHTML = enabled
++        ? `<span>Effective limited speed</span><strong>${rate.toFixed(2)} Mbps · ${percent}%</strong>`
++        : '<span>Fair Use is disabled</span><strong>Full speed</strong>';
++    }
+   }
+ 
+   function wire(field, kind) {
+     updateField(field, kind);
+-    field.querySelectorAll('input,select,label').forEach(element => element.addEventListener('click', event => event.stopPropagation()));
++    field.querySelectorAll('input,select,label,button[data-fair-switch]').forEach(element => element.addEventListener('click', event => event.stopPropagation()));
++    const hidden = field.querySelector('[data-fair=enabled]');
++    const switchButton = field.querySelector('[data-fair-switch]');
++    switchButton?.addEventListener('click', event => {
++      event.preventDefault();
++      event.stopPropagation();
++      if (!hidden) return;
++      hidden.checked = !hidden.checked;
++      hidden.dispatchEvent(new Event('change', {bubbles: true}));
++    });
+     const dirty = () => {
+       field.dataset.dirty = '1';
+       updateField(field, kind);
+-      field.querySelector('[data-result]').textContent = 'Will be saved with ' + (kind === 'group' ? 'Group' : 'Host') + '.';
++      const result = field.querySelector('[data-result]');
++      if (result) result.textContent = 'Will be saved with ' + (kind === 'group' ? 'Group' : 'Host') + '.';
+     };
+     field.addEventListener('input', dirty);
+     field.addEventListener('change', dirty);
+   }
+ 
++  function fairSummary(kind, enabled) {
++    return `<summary class="hs-fair-summary flex cursor-pointer items-center gap-2 py-4 text-sm font-medium"><span class="hs-fair-summary-title"><span>Fair Use</span>${hsTagMarkup()}</span><span class="hs-fair-summary-meta"><span class="hs-fair-summary-state" data-fair-summary-state data-state="${enabled?'on':'off'}">${enabled?'Enabled':'Off'}</span><span class="hs-fair-chevron">⌄</span></span></summary>`;
++  }
++
++  function fairToggle(label, help, enabled) {
++    return `<div class="hs-fair-enable-row"><div class="hs-fair-enable-copy"><div class="hs-fair-enable-title">${label}</div><div class="hs-fair-enable-help">${help}</div></div><input class="sr-only" type="checkbox" data-fair="enabled" ${enabled?'checked':''}><button type="button" class="hs-fair-switch" role="switch" data-fair-switch data-state="${enabled?'checked':'unchecked'}" aria-checked="${enabled?'true':'false'}" aria-label="${label}"><span class="hs-fair-switch-thumb"></span></button></div>`;
++  }
++
++  function fairControl(label, help, control) {
++    return `<label class="hs-fair-control"><span class="hs-fair-label">${label}</span>${control}<span class="hs-fair-help">${help}</span></label>`;
++  }
++
+   function hostField(dialog) {
