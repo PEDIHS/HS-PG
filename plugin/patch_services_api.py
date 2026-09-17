@@ -81,6 +81,11 @@ def patch_native(app):
             '\n    @property\n    def hs_status(self) -> str:\n        from app.hs_fair_runtime import user_state\n        state = user_state(self)\n        return state["status"] if state else self.status.value\n',1)
         # computed_field serializes the derived field, with no new database column.
         text=text.replace(marker+'\n    @property',marker+'\n    @__import__("pydantic").computed_field\n    @property',1)
+    configured_marker='    # HS user-specific Fair Use metadata.'
+    if configured_marker not in text:
+        status_anchor='        return state["status"] if state else self.status.value\n'
+        if text.count(status_anchor)!=1:raise RuntimeError('HS user status anchor changed')
+        text=text.replace(status_anchor,status_anchor+'\n'+configured_marker+'\n    @__import__("pydantic").computed_field\n    @property\n    def hs_fair_configured(self) -> bool:\n        from app.hs_fair_runtime import user_configured\n        return user_configured(self)\n',1)
     anchor='class UserListQuery(BaseModel):'
     if '    hs_fair_limited: bool = False' not in text:text=text.replace(anchor,anchor+'\n    hs_fair_limited: bool = False',1)
     metadata='    # HS feature metadata for native user-list viewers.'
@@ -91,9 +96,13 @@ def patch_native(app):
     generated[path]=text
     path=app/'db/crud/user.py';text=path.read_text()
     marker='    # HS Fair limited filter; evaluated before native pagination.'
-    if marker not in text:
-        a=text.index('async def get_users(');pos=text.index('    filters = []',a)+len('    filters = []')
-        text=text[:pos]+'\n'+marker+'\n    if getattr(query, "hs_fair_limited", False):\n        from app.hs_fair_runtime import limited_groups\n        groups = limited_groups()\n        filters.append(or_(*[and_(User.id.in_(ids), User.used_traffic >= threshold) for threshold, ids in groups.items()]) if groups else literal(False))\n        filters.append(User.status == "active")'+text[pos:]
+    old_filter=marker+'\n    if getattr(query, "hs_fair_limited", False):\n        from app.hs_fair_runtime import limited_groups\n        groups = limited_groups()\n        filters.append(or_(*[and_(User.id.in_(ids), User.used_traffic >= threshold) for threshold, ids in groups.items()]) if groups else literal(False))\n        filters.append(User.status == "active")'
+    new_filter=marker+'\n    if getattr(query, "hs_fair_limited", False):\n        from app.hs_fair_runtime import limited_groups, configured_user_ids\n        groups = limited_groups()\n        configured = configured_user_ids()\n        enforced = or_(*[and_(User.id.in_(ids), User.used_traffic >= threshold) for threshold, ids in groups.items()]) if groups else literal(False)\n        manual = User.id.in_(configured) if configured else literal(False)\n        filters.append(or_(manual, enforced))\n        filters.append(User.status == "active")'
+    if new_filter not in text:
+        if old_filter in text:text=text.replace(old_filter,new_filter,1)
+        else:
+            a=text.index('async def get_users(');pos=text.index('    filters = []',a)+len('    filters = []')
+            text=text[:pos]+'\n'+new_filter+text[pos:]
     generated[path]=text
     path=app/'core/manager.py';text=path.read_text()
     anchor='async def init_core_manager():\n    async with GetDB() as db:\n        await core_manager.initialize(db)'

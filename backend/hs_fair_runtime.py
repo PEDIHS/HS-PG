@@ -90,6 +90,22 @@ def user_state(user):
     }
 
 
+def configured_user_ids():
+    if not enabled():return set()
+    values=snapshot('fair-use-users.json')
+    output=set()
+    for identity,value in values.items():
+        if not value:continue
+        try:output.add(int(identity))
+        except (TypeError,ValueError):pass
+    return output
+
+
+def user_configured(user):
+    try:return int(user.id) in configured_user_ids()
+    except (AttributeError,TypeError,ValueError):return False
+
+
 def _status_value(value):
     return str(getattr(value,'value',value))
 

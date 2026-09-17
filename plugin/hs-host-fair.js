@@ -568,7 +568,7 @@
       const badge = row.querySelector('.pointer-events-none.rounded-full');
       if (!badge) continue;
       const previous = row.querySelector('[data-hs-fair-badge]');
-      if (user.hs_status === FAIR_STATUS) {
+      if (user.hs_status === FAIR_STATUS || user.hs_fair_configured === true) {
         if (!badge.hasAttribute('data-hs-original-display')) badge.dataset.hsOriginalDisplay = badge.style.display;
         badge.style.display = 'none';
         if (!previous) {
@@ -652,13 +652,17 @@
   }
 
   function triggerUsersRefresh() {
-    const refresh = [...document.querySelectorAll('button')].find(button =>
-      !button.disabled && (button.querySelector('svg.lucide-refresh-cw') || /refresh/i.test(button.getAttribute('aria-label') || '') || /refresh/i.test(button.title || '')));
-    if (refresh) {
-      refresh.click();
-      return true;
-    }
     const found = statusChipGroup();
+    const isRefresh = button => !button.disabled &&
+      (button.querySelector('svg.lucide-refresh-cw') || /refresh/i.test(button.getAttribute('aria-label') || '') || /refresh/i.test(button.title || ''));
+    let scope = found?.group || null;
+    for (let depth = 0; scope && depth < 6; depth++, scope = scope.parentElement) {
+      const refresh = [...scope.querySelectorAll('button')].find(button => button !== document.getElementById('hs-fair-filter') && isRefresh(button));
+      if (refresh) {
+        refresh.click();
+        return true;
+      }
+    }
     const fallback = found?.buttons.find(button => /^(Active|فعال)$/i.test(button.textContent.trim())) || found?.buttons[0];
     if (fallback) {
       fairRefreshClick = true;
