@@ -1,0 +1,25 @@
+name: sync-user-fair
+on:
+  push:
+    branches: [feat/user-fair-settings]
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/user-fair-settings
+          fetch-depth: 0
+      - name: Apply tested patch
+        run: |
+          cat .sync/user-fair-00.patch .sync/user-fair-01.patch .sync/user-fair-02.patch .sync/user-fair-03.patch > /tmp/user-fair.patch
+          git apply --check /tmp/user-fair.patch
+          git apply /tmp/user-fair.patch
+          rm -f .sync/user-fair-00.patch .sync/user-fair-01.patch .sync/user-fair-02.patch .sync/user-fair-03.patch .github/workflows/sync-user-fair.yml
+          git config user.name PEDIHS
+          git config user.email 130468444+PEDIHS@users.noreply.github.com
+          git add -A
+          git commit -m "Add per-user Fair Use controls"
+          git push
