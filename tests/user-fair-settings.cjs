@@ -11,7 +11,8 @@ const fs=require('fs'),path=require('path'),assert=require('node:assert/strict')
     else if(u.pathname==='/api/hs-services/fair-use') data={policies:{},group_policies:{},user_policies:saved?{'1':saved}:{},fair_status_hosts:[],shared_hosts:{},groups:[],enforcement_available:true};
     else if(u.pathname==='/api/groups') data={groups:[]};
     else if(u.pathname==='/api/users') data={users:[{id:1,username:'alice',status:'active',hs_status:'active',hs_fair_configured:fair}],hs_fair_use_enabled:true};
-    else if(u.pathname==='/api/user/alice'){nativeSaves++;data={id:1,username:'alice',status:'active'};}
+    else if(u.pathname==='/api/user/alice' && route.request().method()==='GET'){data={id:1,username:'alice',status:'active'};}
+    else if(u.pathname==='/api/user/alice' && route.request().method()==='PUT'){nativeSaves++;data={id:1,username:'alice',status:'active'};}
     else if(u.pathname==='/api/hs-services/users/1/fair-use' && route.request().method()==='PUT'){
       saved=route.request().postDataJSON();fair=true;data={user_id:1,policy:{...saved,mode:'always',threshold_bytes:0}};
     } else if(u.pathname==='/api/hs-services/users/1/fair-use' && route.request().method()==='DELETE'){
@@ -21,8 +22,7 @@ const fs=require('fs'),path=require('path'),assert=require('node:assert/strict')
   });  await page.goto('http://hs-user.test/dashboard/#/users');
   await page.evaluate(()=>localStorage.setItem('token','test'));
   await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../plugin/hs-host-fair.js'),'utf8')});
-  await page.evaluate(()=>fetch('/api/users'));
-  await page.waitForTimeout(60);
+  // Do not pre-load /api/users: Edit User must resolve its ID directly from native /api/user/{username}.
   await page.evaluate(()=>{
     const d=document.createElement('div');d.setAttribute('role','dialog');
     d.innerHTML='<form><div class="-mr-4 max-h-[80dvh] overflow-y-auto px-2 pr-4"><input name="username" value="alice" disabled><div>Native User fields</div></div><div class="native-footer"><button type="submit">Save</button></div></form>';
