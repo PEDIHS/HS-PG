@@ -1,0 +1,29 @@
+name: apply-user-fair-race
+on:
+  push:
+    branches: [fix/user-fair-filter-race]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/user-fair-filter-race
+          fetch-depth: 0
+      - name: Apply tested Fair Use race fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .sync/fair-race-00.patch .sync/fair-race-01.patch > /tmp/fair-race.patch
+          echo '3b6f409c52d80ceeb0d2bb729f6bfa5cb642efe4c9e609cc4295e5c42ea86077  /tmp/fair-race.patch' | sha256sum -c -
+          git apply --check /tmp/fair-race.patch
+          git apply /tmp/fair-race.patch
+          rm -f .sync/fair-race-00.patch .sync/fair-race-01.patch .github/workflows/apply-user-fair-race.yml
+          git config user.name PEDIHS
+          git config user.email 130468444+PEDIHS@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'Fix Fair Use filter race and user edit visibility'
+          git push
