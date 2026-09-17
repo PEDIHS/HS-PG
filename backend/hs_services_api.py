@@ -425,6 +425,11 @@ class GroupFairBody(BaseModel):
     baseline_mbps: float = Field(gt=0, le=100000, allow_inf_nan=False)
 
 
+class UserFairBody(BaseModel):
+    speed_percent: float = Field(ge=1, le=100, allow_inf_nan=False)
+    baseline_mbps: float = Field(gt=0, le=100000, allow_inf_nan=False)
+
+
 class HostFairStatusBody(BaseModel):
     enabled: bool
 
@@ -480,6 +485,7 @@ async def fair_settings(
     return dict(
         policies=policies,
         group_policies=store.read('fair-use-groups.json'),
+        user_policies=store.read('fair-use-users.json'),
         groups=[dict(id=int(identity),name=name) for identity,name in group_rows],
         fair_status_hosts=sorted(int(identity) for identity,value in fair_status.items() if value is True and identity in host_ids),
         shared_hosts=shared,
@@ -609,6 +615,50 @@ async def delete_group_fair(
     with store.lock():
         policies=store.read('fair-use-groups.json');policies.pop(str(group_id),None);store.write('fair-use-groups.json',policies)
     return {"ok":True}
+
+
+@router.put("/users/{user_id}/fair-use")
+async def save_user_fair(
+    user_id: int,
+    body: UserFairBody,
+    db: AsyncSession = Depends(get_db),
+    owner: AdminDetails = Depends(_require_owner),
+):
+    from app.db.models import User
+    from app.hs_fair_use import validate_policy
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    policy = validate_policy({
+        "mode": "always",
+        "threshold_bytes": 0,
+        "speed_percent": body.speed_percent,
+        "baseline_mbps": body.baseline_mbps,
+    })
+    with store.lock():
+        policies = store.read("fair-use-users.json")
+        policies[str(user_id)] = policy
+        store.write("fair-use-users.json", policies)
+    return dict(
+        user_id=user_id, policy=policy, state="saved", enforced=False,
+        note="Saved with the User. It becomes Fair limited after the HS rate adapter acknowledges the new policy while the native user status is Active.",
+    )
+
+
+@router.delete("/users/{user_id}/fair-use")
+async def delete_user_fair(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    owner: AdminDetails = Depends(_require_owner),
+):
+    from app.db.models import User
+    if not await db.get(User, user_id):
+        raise HTTPException(404, "User not found")
+    with store.lock():
+        policies = store.read("fair-use-users.json")
+        policies.pop(str(user_id), None)
+        store.write("fair-use-users.json", policies)
+    return {"ok": True, "user_id": user_id}
 
 
 @router.get("/users/{user_id}/fair-use-preview")

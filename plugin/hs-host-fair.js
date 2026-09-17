@@ -3,6 +3,7 @@
 
   const HOST_ID = 'hs-host-fair-use';
   const GROUP_ID = 'hs-group-fair-use';
+  const USER_ID = 'hs-user-fair-use';
   const GROUP_BAR_ID = 'hs-host-group-bar';
   const STYLE_ID = 'hs-host-fair-style';
   const FAIR_STATUS = 'fair_limited';
@@ -168,7 +169,7 @@
   function policyData(field, kind) {
     const q = name => field.querySelector('[data-fair=' + name + ']');
     if (!q('enabled').checked) return null;
-    const mode = kind === 'group' ? (q('mode')?.value || 'always') : 'threshold';
+    const mode = kind === 'group' ? (q('mode')?.value || 'always') : kind === 'user' ? 'always' : 'threshold';
     const value = {
       mode,
       threshold_bytes: mode === 'always' ? 0 : Math.round(Number(q('gb').value) * 1e9),
@@ -187,7 +188,7 @@
     const q = name => field.querySelector('[data-fair=' + name + ']');
     const toggle = q('enabled');
     const enabled = !!toggle?.checked;
-    const mode = kind === 'group' ? (q('mode')?.value || 'always') : 'threshold';
+    const mode = kind === 'group' ? (q('mode')?.value || 'always') : kind === 'user' ? 'always' : 'threshold';
     field.dataset.enabled = enabled ? '1' : '0';
     toggle?.setAttribute('aria-checked', String(enabled));
 
@@ -238,7 +239,7 @@
       field.dataset.dirty = '1';
       updateField(field, kind);
       const result = field.querySelector('[data-result]');
-      if (result) result.textContent = 'Will be saved with ' + (kind === 'group' ? 'Group' : 'Host') + '.';
+      if (result) result.textContent = 'Will be saved with ' + (kind === 'group' ? 'Group' : kind === 'user' ? 'User' : 'Host') + '.';
     };
     field.addEventListener('input', dirty);
     field.addEventListener('change', dirty);
@@ -274,6 +275,32 @@
     const target = [...form.querySelectorAll('div')].find(element => element.children.length > 1 && String(element.className).includes('overflow-y-auto')) || form;
     target.appendChild(field);
     wire(field, 'host');
+  }
+
+  function identifyUser(dialog) {
+    const username = dialog.querySelector('[name=username]')?.value?.trim();
+    if (!username) return '';
+    return String(users.get(username)?.id || '');
+  }
+
+  function userField(dialog) {
+    if (dialog.querySelector('#' + USER_ID) || !isUsersRoute()) return;
+    const form = dialog.querySelector('form');
+    const username = form?.querySelector('[name=username]');
+    if (!username) return;
+    const id = identifyUser(dialog);
+    if (!id) return; // User-specific Fair Use belongs only in an existing User's Edit dialog.
+    const policy = settings?.user_policies?.[id];
+    const field = document.createElement('details');
+    field.id = USER_ID;
+    field.dataset.userId = id;
+    field.dataset.kind = 'user';
+    field.className = 'hs-fair-section mt-4 rounded-sm border px-4';
+    const enabled = !!policy;
+    field.innerHTML = `${fairSummary('user', enabled)}<div class="hs-fair-body">${fairToggle('Enable Fair Use for this User','Immediately apply a user-specific speed cap while the native User status is Active.',enabled)}<div class="hs-fair-grid">${fairControl('Full speed','Baseline speed used to calculate this User cap.',`<input class="${input}" type="number" min="0.1" max="100000" step="0.1" data-fair="base" value="${policy?.baseline_mbps||100}">`)}${fairControl('Limited speed','Percentage of baseline retained while this User is Fair limited.',`<div class="relative"><input class="${input} pr-8" type="number" min="1" max="100" data-fair="percent" value="${policy?.speed_percent||20}"><span class="text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs">%</span></div>`)}</div><div class="hs-fair-rate" data-rate></div><div class="hs-fair-note">This rule applies immediately to every inbound assigned to this User. If Host or Group Fair Use also applies, the strictest active cap wins.<br>After the HS rate adapter acknowledges the policy, this User appears under the Fair Use filter automatically.</div><p role="status" class="hs-fair-save-note" data-result>${id?'Saved together with the normal User Save button.':'Create the User first; Fair Use will be saved with it.'}</p></div>`;
+    const target = [...form.querySelectorAll('div')].find(element => String(element.className).includes('overflow-y-auto') && String(element.className).includes('max-h-')) || form;
+    target.appendChild(field);
+    wire(field, 'user');
   }
 
   function groupField(dialog) {
@@ -438,6 +465,10 @@
 
   function isHostsRoute() {
     return /(^|[\/#])hosts(?:[?#/]|$)/.test(String(location.pathname + location.hash));
+  }
+
+  function isUsersRoute() {
+    return /(^|[\/#])users(?:[?#/]|$)/.test(String(location.pathname + location.hash));
   }
 
   function selectedHostGroup() {
@@ -716,6 +747,7 @@
       document.querySelectorAll('[role=dialog]').forEach(dialog => {
         hostField(dialog);
         groupField(dialog);
+        userField(dialog);
         enhanceHostStatus(dialog);
       });
     }
@@ -729,7 +761,7 @@
         element.style.display = element.dataset.hsOriginalDisplay;
         delete element.dataset.hsOriginalDisplay;
       });
-      document.querySelectorAll('#' + HOST_ID + ',#' + GROUP_ID + ',#hs-fair-filter,[data-hs-fair-badge],[data-hs-fair-status-badge],[data-hs-fair-status-option]').forEach(element => element.remove());
+      document.querySelectorAll('#' + HOST_ID + ',#' + GROUP_ID + ',#' + USER_ID + ',#hs-fair-filter,[data-hs-fair-badge],[data-hs-fair-status-badge],[data-hs-fair-status-option]').forEach(element => element.remove());
     }
   }
 
@@ -743,12 +775,29 @@
     return {kind: 'host', policy, fairStatus};
   }
 
+  function userSavePending() {
+    const field = document.querySelector('#' + USER_ID + '[data-dirty="1"]');
+    if (!field) return null;
+    return {kind: 'user', policy: {present: true, body: policyData(field, 'user'), field}};
+  }
+
+  function refreshUsersAfterFairSave() {
+    requestAnimationFrame(triggerUsersRefresh);
+    setTimeout(triggerUsersRefresh, 1200);
+    setTimeout(triggerUsersRefresh, 10500);
+  }
+
   async function completePending(pending, result) {
-    if (!result.id) throw Error((pending.kind === 'group' ? 'Group' : 'Host') + ' ID missing from save response');
+    if (!result.id) throw Error((pending.kind === 'group' ? 'Group' : pending.kind === 'user' ? 'User' : 'Host') + ' ID missing from save response');
     if (pending.policy?.present) {
-      const path = '/api/hs-services/' + (pending.kind === 'group' ? 'groups/' : 'hosts/') + result.id + '/fair-use';
+      const resource = pending.kind === 'group' ? 'groups/' : pending.kind === 'user' ? 'users/' : 'hosts/';
+      const path = '/api/hs-services/' + resource + result.id + '/fair-use';
       await api(path, pending.policy.body, pending.policy.body ? 'PUT' : 'DELETE');
       pending.policy.field.dataset.dirty = '0';
+      if (pending.kind === 'user') {
+        pending.policy.field.dataset.userId = String(result.id);
+        refreshUsersAfterFairSave();
+      }
     }
     if (pending.fairStatus) {
       await api('/api/hs-services/hosts/' + result.id + '/fair-status', {enabled: pending.fairStatus.enabled}, 'PUT');
@@ -768,6 +817,8 @@
       let pending = null;
       const hostMutation = url.origin === location.origin && /\/api\/host(?:\/\d+)?\/?$/.test(url.pathname) && ['POST', 'PUT'].includes(method);
       const groupMutation = url.origin === location.origin && /\/api\/group(?:\/\d+)?\/?$/.test(url.pathname) && ['POST', 'PUT'].includes(method);
+      const userMutation = url.origin === location.origin && ((method === 'POST' && url.pathname === '/api/user') ||
+        (method === 'PUT' && /^\/api\/user\/(?:by-username\/[^/]+|by-id\/\d+|[^/]+)\/?$/.test(url.pathname)));
       if (hostMutation) {
         try { pending = hostSavePending(); } catch (exc) { error(exc.message); throw exc; }
       }
@@ -777,6 +828,9 @@
           try { pending = {kind: 'group', policy: {present: true, field, body: policyData(field, 'group')}}; }
           catch (exc) { error(exc.message); throw exc; }
         }
+      }
+      if (userMutation) {
+        try { pending = userSavePending(); } catch (exc) { error(exc.message); throw exc; }
       }
       if (url.origin === location.origin && url.pathname === '/api/users' && fairFilterSelected()) {
         url.searchParams.set('hs_fair_limited', 'true');
@@ -788,7 +842,7 @@
         if (pending) {
           const result = await response.clone().json();
           try { await completePending(pending, result); load(); }
-          catch (exc) { error((pending.kind === 'group' ? 'Group' : 'Host') + ' saved, but HS status/Fair Use failed: ' + exc.message); }
+          catch (exc) { error((pending.kind === 'group' ? 'Group' : pending.kind === 'user' ? 'User' : 'Host') + ' saved, but HS status/Fair Use failed: ' + exc.message); }
         }
         if (url.pathname === '/api/users') {
           const payload = await response.clone().json();
@@ -797,7 +851,7 @@
           for (const user of payload.users || []) users.set(user.username, user);
           requestAnimationFrame(scan);
         }
-        if (url.pathname === '/api/groups' || hostMutation || groupMutation || (method === 'DELETE' && /\/api\/(?:host|group)\/\d+\/?$/.test(url.pathname))) {
+        if (url.pathname === '/api/groups' || hostMutation || groupMutation || userMutation || (method === 'DELETE' && /\/api\/(?:host|group)\/\d+\/?$/.test(url.pathname))) {
           requestAnimationFrame(load);
         }
       }
