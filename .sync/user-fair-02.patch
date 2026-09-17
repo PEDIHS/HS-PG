@@ -1,0 +1,117 @@
+tatus-option]').forEach(element => element.remove());
++      document.querySelectorAll('#' + HOST_ID + ',#' + GROUP_ID + ',#' + USER_ID + ',#hs-fair-filter,[data-hs-fair-badge],[data-hs-fair-status-badge],[data-hs-fair-status-option]').forEach(element => element.remove());
+     }
+   }
+ 
+@@ -743,12 +775,29 @@
+     return {kind: 'host', policy, fairStatus};
+   }
+ 
++  function userSavePending() {
++    const field = document.querySelector('#' + USER_ID + '[data-dirty="1"]');
++    if (!field) return null;
++    return {kind: 'user', policy: {present: true, body: policyData(field, 'user'), field}};
++  }
++
++  function refreshUsersAfterFairSave() {
++    requestAnimationFrame(triggerUsersRefresh);
++    setTimeout(triggerUsersRefresh, 1200);
++    setTimeout(triggerUsersRefresh, 10500);
++  }
++
+   async function completePending(pending, result) {
+-    if (!result.id) throw Error((pending.kind === 'group' ? 'Group' : 'Host') + ' ID missing from save response');
++    if (!result.id) throw Error((pending.kind === 'group' ? 'Group' : pending.kind === 'user' ? 'User' : 'Host') + ' ID missing from save response');
+     if (pending.policy?.present) {
+-      const path = '/api/hs-services/' + (pending.kind === 'group' ? 'groups/' : 'hosts/') + result.id + '/fair-use';
++      const resource = pending.kind === 'group' ? 'groups/' : pending.kind === 'user' ? 'users/' : 'hosts/';
++      const path = '/api/hs-services/' + resource + result.id + '/fair-use';
+       await api(path, pending.policy.body, pending.policy.body ? 'PUT' : 'DELETE');
+       pending.policy.field.dataset.dirty = '0';
++      if (pending.kind === 'user') {
++        pending.policy.field.dataset.userId = String(result.id);
++        refreshUsersAfterFairSave();
++      }
+     }
+     if (pending.fairStatus) {
+       await api('/api/hs-services/hosts/' + result.id + '/fair-status', {enabled: pending.fairStatus.enabled}, 'PUT');
+@@ -768,6 +817,8 @@
+       let pending = null;
+       const hostMutation = url.origin === location.origin && /\/api\/host(?:\/\d+)?\/?$/.test(url.pathname) && ['POST', 'PUT'].includes(method);
+       const groupMutation = url.origin === location.origin && /\/api\/group(?:\/\d+)?\/?$/.test(url.pathname) && ['POST', 'PUT'].includes(method);
++      const userMutation = url.origin === location.origin && ((method === 'POST' && url.pathname === '/api/user') ||
++        (method === 'PUT' && /^\/api\/user\/(?:by-username\/[^/]+|by-id\/\d+|[^/]+)\/?$/.test(url.pathname)));
+       if (hostMutation) {
+         try { pending = hostSavePending(); } catch (exc) { error(exc.message); throw exc; }
+       }
+@@ -778,6 +829,9 @@
+           catch (exc) { error(exc.message); throw exc; }
+         }
+       }
++      if (userMutation) {
++        try { pending = userSavePending(); } catch (exc) { error(exc.message); throw exc; }
++      }
+       if (url.origin === location.origin && url.pathname === '/api/users' && fairFilterSelected()) {
+         url.searchParams.set('hs_fair_limited', 'true');
+         url.searchParams.delete('status');
+@@ -788,7 +842,7 @@
+         if (pending) {
+           const result = await response.clone().json();
+           try { await completePending(pending, result); load(); }
+-          catch (exc) { error((pending.kind === 'group' ? 'Group' : 'Host') + ' saved, but HS status/Fair Use failed: ' + exc.message); }
++          catch (exc) { error((pending.kind === 'group' ? 'Group' : pending.kind === 'user' ? 'User' : 'Host') + ' saved, but HS status/Fair Use failed: ' + exc.message); }
+         }
+         if (url.pathname === '/api/users') {
+           const payload = await response.clone().json();
+@@ -797,7 +851,7 @@
+           for (const user of payload.users || []) users.set(user.username, user);
+           requestAnimationFrame(scan);
+         }
+-        if (url.pathname === '/api/groups' || hostMutation || groupMutation || (method === 'DELETE' && /\/api\/(?:host|group)\/\d+\/?$/.test(url.pathname))) {
++        if (url.pathname === '/api/groups' || hostMutation || groupMutation || userMutation || (method === 'DELETE' && /\/api\/(?:host|group)\/\d+\/?$/.test(url.pathname))) {
+           requestAnimationFrame(load);
+         }
+       }
+diff --git a/tests/package.json b/tests/package.json
+index 0e3d4f8..88f32e3 100644
+--- a/tests/package.json
++++ b/tests/package.json
+@@ -3,7 +3,7 @@
+   "private": true,
+   "scripts": {
+     "test:dom": "node dom-navigation.cjs",
+-    "test:browser": "node ui-navigation.cjs && node node-pro-card.cjs"
++    "test:browser": "node ui-navigation.cjs && node node-pro-card.cjs && node user-fair-settings.cjs"
+   },
+   "devDependencies": {
+     "jsdom": "26.0.0",
+diff --git a/tests/test_fair_api.py b/tests/test_fair_api.py
+index 44371db..218f63e 100644
+--- a/tests/test_fair_api.py
++++ b/tests/test_fair_api.py
+@@ -46,6 +46,13 @@ def fair_api(tmp_path, monkeypatch):
+         name = Column(String)
+         is_disabled = Column(Boolean, default=False)
+ 
++    class User(Base):
++        __tablename__ = "users"
++        id = Column(Integer, primary_key=True)
++        username = Column(String, unique=True)
++        status = Column(String, default="active")
++        used_traffic = Column(Integer, default=0)
++
+     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+     Base.metadata.create_all(engine)
+     session = Session(engine)
+@@ -53,7 +60,7 @@ def fair_api(tmp_path, monkeypatch):
+         CoreConfig(id=1, config={"inbounds": [{"tag": "paid", "protocol": "vless"}]}),
+         Node(id=7, core_config_id=1), Node(id=8, core_config_id=1),
+         ProxyHost(id=1, inbound_tag="paid"), ProxyHost(id=2, inbound_tag="paid"),
+-        Group(id=5, name="VIP"),
++        Group(id=5, name="VIP"), User(id=9, username="alice", status="active", used_traffic=0),
+     ])
+     session.commit()
+ 
+@@ -79,7 +86,7 @@ def fair_api(tmp_path, monkeypatch):
+     dbmod = types.ModuleType("app.db"); dbmod.get_db = get_db; dbmod.AsyncSession = object
+     monkeypatch.setitem(sys.modules, 
