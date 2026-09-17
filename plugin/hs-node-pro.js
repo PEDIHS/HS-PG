@@ -147,6 +147,7 @@
       font-weight:750;
       letter-spacing:.65px;
     }
+    .${BLOCK_CLASS}-hs-tag{display:inline-flex;height:14px;min-width:18px;align-items:center;justify-content:center;border:1px solid rgba(235,204,99,.32);border-radius:999px;padding:0 4px;background:rgba(235,204,99,.08);color:#ebcc63;font-size:7px;font-weight:800;line-height:1;letter-spacing:.04em}
     .${BLOCK_CLASS}-realtime{
       position:absolute;
       left:50%;
@@ -699,7 +700,7 @@
     return `
       <div class="${BLOCK_CLASS}-live-shell">
         <div class="${BLOCK_CLASS}-live-head">
-          <div class="${BLOCK_CLASS}-live-title"><span class="${BLOCK_CLASS}-live-dot"></span><span>LIVE NETWORK</span></div>
+          <div class="${BLOCK_CLASS}-live-title"><span class="${BLOCK_CLASS}-live-dot"></span><span>LIVE NETWORK</span><span class="${BLOCK_CLASS}-hs-tag">HS</span></div>
           <span class="${BLOCK_CLASS}-realtime"><span>REALTIME</span></span>
         </div>
         <div class="${BLOCK_CLASS}-network" aria-label="Live network traffic">

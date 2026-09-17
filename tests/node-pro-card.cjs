@@ -37,7 +37,7 @@ const {chromium}=require('playwright'),fs=require('fs'),path=require('path'),ass
   assert.equal(geometry.sparkFilter,'none','sparkline GPU filter should stay disabled');
   assert.equal(geometry.nameColor,'rgb(235, 204, 99)');
   assert(geometry.cardBg.includes('linear-gradient'),'outer card must use liquid-glass gradient');
-  assert((await block.innerText()).includes('LIVE NETWORK')); assert((await block.innerText()).includes('REALTIME'));
+  assert((await block.innerText()).includes('LIVE NETWORK')); assert((await block.innerText()).includes('REALTIME')); assert.equal(await page.locator('.hs-node-pro-hs-tag').innerText(),'HS');
   assert(await page.locator('#card').evaluate(el=>el.classList.contains('hs-node-pro-card')));
   await page.locator('[data-hs-resource="cpu"] .hs-node-pro-spark path').evaluate(el=>el.dataset.renderIdentity='keep');
   await page.waitForTimeout(2200);
