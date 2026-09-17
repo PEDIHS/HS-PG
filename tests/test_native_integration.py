@@ -78,6 +78,15 @@ def test_always_group_policy_limits_all_group_inbounds(runtime):
 
 
 
+def test_manual_user_configuration_is_visible_before_ack(runtime):
+    from hs_fair_use import validate_policy
+    policy=validate_policy({'mode':'always','threshold_bytes':0,'baseline_mbps':100,'speed_percent':20})
+    store.write('fair-use-users.json',{'1':policy,'bad':policy})
+    assert fair.configured_user_ids()=={1}
+    assert fair.user_configured(Obj(id=1)) is True
+    assert fair.user_configured(Obj(id=2)) is False
+
+
 def test_user_override_is_immediate_and_keeps_active_host_visibility(runtime):
     from hs_fair_use import validate_policy
     policy=validate_policy({'mode':'always','threshold_bytes':0,'baseline_mbps':100,'speed_percent':20})
