@@ -1,0 +1,80 @@
+diff --git a/backend/hs_fair_runtime.py b/backend/hs_fair_runtime.py
+index 9998f16..99c51c7 100644
+--- a/backend/hs_fair_runtime.py
++++ b/backend/hs_fair_runtime.py
+@@ -90,6 +90,22 @@ def user_state(user):
+     }
+ 
+ 
++def configured_user_ids():
++    if not enabled():return set()
++    values=snapshot('fair-use-users.json')
++    output=set()
++    for identity,value in values.items():
++        if not value:continue
++        try:output.add(int(identity))
++        except (TypeError,ValueError):pass
++    return output
++
++
++def user_configured(user):
++    try:return int(user.id) in configured_user_ids()
++    except (AttributeError,TypeError,ValueError):return False
++
++
+ def _status_value(value):
+     return str(getattr(value,'value',value))
+ 
+diff --git a/plugin/hs-host-fair.js b/plugin/hs-host-fair.js
+index 66b7ddd..ec58fe8 100644
+--- a/plugin/hs-host-fair.js
++++ b/plugin/hs-host-fair.js
+@@ -568,7 +568,7 @@
+       const badge = row.querySelector('.pointer-events-none.rounded-full');
+       if (!badge) continue;
+       const previous = row.querySelector('[data-hs-fair-badge]');
+-      if (user.hs_status === FAIR_STATUS) {
++      if (user.hs_status === FAIR_STATUS || user.hs_fair_configured === true) {
+         if (!badge.hasAttribute('data-hs-original-display')) badge.dataset.hsOriginalDisplay = badge.style.display;
+         badge.style.display = 'none';
+         if (!previous) {
+diff --git a/plugin/patch_services_api.py b/plugin/patch_services_api.py
+index 55a3e23..eedf5f7 100644
+--- a/plugin/patch_services_api.py
++++ b/plugin/patch_services_api.py
+@@ -81,6 +81,11 @@ def patch_native(app):
+             '\n    @property\n    def hs_status(self) -> str:\n        from app.hs_fair_runtime import user_state\n        state = user_state(self)\n        return state["status"] if state else self.status.value\n',1)
+         # computed_field serializes the derived field, with no new database column.
+         text=text.replace(marker+'\n    @property',marker+'\n    @__import__("pydantic").computed_field\n    @property',1)
++    configured_marker='    # HS user-specific Fair Use metadata.'
++    if configured_marker not in text:
++        status_anchor='        return state["status"] if state else self.status.value\n'
++        if text.count(status_anchor)!=1:raise RuntimeError('HS user status anchor changed')
++        text=text.replace(status_anchor,status_anchor+'\n'+configured_marker+'\n    @__import__("pydantic").computed_field\n    @property\n    def hs_fair_configured(self) -> bool:\n        from app.hs_fair_runtime import user_configured\n        return user_configured(self)\n',1)
+     anchor='class UserListQuery(BaseModel):'
+     if '    hs_fair_limited: bool = False' not in text:text=text.replace(anchor,anchor+'\n    hs_fair_limited: bool = False',1)
+     metadata='    # HS feature metadata for native user-list viewers.'
+@@ -91,9 +96,13 @@ def patch_native(app):
+     generated[path]=text
+     path=app/'db/crud/user.py';text=path.read_text()
+     marker='    # HS Fair limited filter; evaluated before native pagination.'
+-    if marker not in text:
+-        a=text.index('async def get_users(');pos=text.index('    filters = []',a)+len('    filters = []')
+-        text=text[:pos]+'\n'+marker+'\n    if getattr(query, "hs_fair_limited", False):\n        from app.hs_fair_runtime import limited_groups\n        groups = limited_groups()\n        filters.append(or_(*[and_(User.id.in_(ids), User.used_traffic >= threshold) for threshold, ids in groups.items()]) if groups else literal(False))\n        filters.append(User.status == "active")'+text[pos:]
++    old_filter=marker+'\n    if getattr(query, "hs_fair_limited", False):\n        from app.hs_fair_runtime import limited_groups\n        groups = limited_groups()\n        filters.append(or_(*[and_(User.id.in_(ids), User.used_traffic >= threshold) for threshold, ids in groups.items()]) if groups else literal(False))\n        filters.append(User.status == "active")'
++    new_filter=marker+'\n    if getattr(query, "hs_fair_limited", False):\n        from app.hs_fair_runtime import limited_groups, configured_user_ids\n        groups = limited_groups()\n        configured = configured_user_ids()\n        enforced = or_(*[and_(User.id.in_(ids), User.used_traffic >= threshold) for threshold, ids in groups.items()]) if groups else literal(False)\n        manual = User.id.in_(configured) if configured else literal(False)\n        filters.append(or_(manual, enforced))\n        filters.append(User.status == "active")'
++    if new_filter not in text:
++        if old_filter in text:text=text.replace(old_filter,new_filter,1)
++        else:
++            a=text.index('async def get_users(');pos=text.index('    filters = []',a)+len('    filters = []')
++            text=text[:pos]+'\n'+new_filter+text[pos:]
+     generated[path]=text
+     path=app/'core/manager.py';text=path.read_text()
+     anchor='async def init_core_manager():\n    async with GetDB() as db:\n        await core_manager.initialize(db)'
+diff --git a/tests/native_patch_check.py b/tests/native_patch_check.py
+index ace5663..a8bd655 100644
+--- a/tests/native_patch_check.py
++++ b/tests/native_patch_check.py
+@@ -6,6 +6,9 @@ app=Path(sys.argv[1])
+ generated=patch_native(app)
+ generated[app/'routers/__init__.py']=patch_router((app/'routers/__init__.py').read_text())
