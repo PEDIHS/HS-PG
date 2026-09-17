@@ -1,0 +1,74 @@
+       });
++      });
++    }
+   }
+ 
+   function groupField(dialog) {
+@@ -686,26 +721,41 @@
+     button.dataset.state = active ? 'on' : 'off';
+   }
+ 
+-  function setFairFilter(enabled, navigate = true) {
+-    const url = new URL(location.href);
++  async function fairUserIds() {
++    const payload = await api('/api/users?limit=10000&offset=0&hs_fair_limited=true');
++    return [...new Set((payload.users || []).map(user => Number(user.id)).filter(id => Number.isInteger(id) && id > 0))];
++  }
++
++  async function setFairFilter(enabled, navigate = true) {
++    const oldURL = location.href;
++    const url = new URL(oldURL);
+     const route = hashParams(url);
+-    route.params.delete('hs_fair_limited');
+-    for (const key of ['status', 'offset', 'page']) route.params.delete(key);
+-    if (url.hash.startsWith('#/')) {
+-      const query = route.params.toString();
+-      url.hash = route.path + (query ? '?' + query : '');
+-    }
+-    for (const key of ['status', 'offset', 'page']) url.searchParams.delete(key);
+-    if (enabled) url.searchParams.set('hs_fair_limited', '1'); else url.searchParams.delete('hs_fair_limited');
++    for (const key of ['hs_fair_limited', 'status', 'offset', 'page', 'ids', 'is_id']) route.params.delete(key);
++    for (const key of ['hs_fair_limited', 'status', 'offset', 'page', 'ids', 'is_id']) url.searchParams.delete(key);
++    if (enabled) {
++      let ids = [];
++      try { ids = await fairUserIds(); } catch (exc) { error('Fair Use users could not be loaded: ' + exc.message); return false; }
++      route.params.set('hs_fair_limited', '1');
++      if (ids.length) route.params.set('ids', ids.join(','));
++      else { route.params.set('search', '__hs_no_fair_users__'); route.params.delete('ids'); }
++    } else {
++      route.params.delete('search');
++    }
++    const query = route.params.toString();
++    url.hash = route.path + (query ? '?' + query : '');
+     history.replaceState(history.state, '', url.href);
+     syncNativeStatusChipsForFair(enabled);
+     const button = document.getElementById('hs-fair-filter');
+     if (button) styleFairFilterButton(button, enabled);
+-    if (navigate) requestAnimationFrame(triggerUsersRefresh);
++    if (navigate) {
++      window.dispatchEvent(new HashChangeEvent('hashchange', {oldURL, newURL: url.href}));
++      requestAnimationFrame(triggerUsersRefresh);
++    }
++    return true;
+   }
+ 
+   function clearFairFilter(navigate = false) {
+-    setFairFilter(false, navigate);
++    void setFairFilter(false, navigate);
+   }
+ 
+   function userFairFilter() {
+@@ -731,7 +781,7 @@
+         event.stopPropagation();
+         const enable = !fairFilterSelected();
+         if (enable) clearNativeStatusSelection();
+-        setFairFilter(enable, true);
++        void setFairFilter(enable, true);
+       });
+       group.appendChild(button);
+     }
+diff --git a/tests/ui-navigation.cjs b/tests/ui-navigation.cjs
+index 1af97e5..ddc4538 100644
+--- a/tests/ui-navigation.cjs
++++ b/tests/ui-navigation.cjs
+@@ -12,6 +12,
