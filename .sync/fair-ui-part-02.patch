@@ -1,0 +1,90 @@
+     if (dialog.querySelector('#' + HOST_ID)) return;
+     const form = dialog.querySelector('form');
+@@ -145,8 +256,13 @@
+     const field = document.createElement('details');
+     field.id = HOST_ID;
+     field.dataset.hostId = id;
+-    field.className = 'rounded-sm border px-4';
+-    field.innerHTML = `<summary class="flex cursor-pointer items-center gap-2 py-4 text-sm font-medium">Fair Use <span class="hs-gold text-xs">HS</span><span style="margin-inline-start:auto">⌄</span></summary><div class="space-y-4 pb-4"><label class="flex items-center gap-2 text-sm"><input type="checkbox" data-fair="enabled" ${policy?'checked':''}> Enable Fair Use</label><div class="grid gap-3 sm:grid-cols-3"><label class="space-y-2 text-xs">After traffic (GB)<input class="${input}" type="number" min="0.001" step="0.001" data-fair="gb" value="${policy?policy.threshold_bytes/1e9:100}"></label><label class="space-y-2 text-xs">Full speed (Mbps)<input class="${input}" type="number" min="0.1" max="100000" step="0.1" data-fair="base" value="${policy?.baseline_mbps||100}"></label><label class="space-y-2 text-xs">Limited speed (%)<input class="${input}" type="number" min="1" max="100" data-fair="percent" value="${policy?.speed_percent||20}"></label></div><p class="text-muted-foreground text-xs" data-rate></p><p class="text-muted-foreground text-xs">${shared.length>1?`Shared inbound: this policy is automatically identical on all ${shared.length} Hosts using it.`:'This policy belongs to the Host inbound. If another Host uses the same inbound later, it inherits the same policy.'}</p><p class="text-muted-foreground text-xs">Each user's charged traffic is evaluated separately. Resetting that user's traffic restores full speed until the threshold is reached again.</p><p class="text-muted-foreground text-xs">${settings?.enforcement_available?'HS rate adapter connected.':'Node setup required: HS-enabled Xray core and HS service agent.'}</p><p role="status" class="text-xs" data-result>${id?'Changes are saved by the normal Host Save button.':'Create the Host with the normal Save button; Fair Use is saved with it.'}</p></div>`;
++    field.dataset.kind = 'host';
++    field.className = 'hs-fair-section rounded-sm border px-4';
++    const enabled = !!policy;
++    const sharedText = shared.length > 1
++      ? `Shared inbound · the same policy is kept in sync across all ${shared.length} Hosts using this inbound.`
++      : 'Inbound policy · another Host using this inbound will inherit the same Fair Use values.';
++    field.innerHTML = `${fairSummary('host', enabled)}<div class="hs-fair-body">${fairToggle('Enable Fair Use','Limit this Host only after each user reaches the configured charged-traffic threshold.',enabled)}<div class="hs-fair-grid">${fairControl('After traffic','Per-user charged traffic before limiting.',`<input class="${input}" type="number" min="0.001" step="0.001" data-fair="gb" value="${policy?policy.threshold_bytes/1e9:100}">`)}${fairControl('Full speed','Baseline speed before the threshold.',`<input class="${input}" type="number" min="0.1" max="100000" step="0.1" data-fair="base" value="${policy?.baseline_mbps||100}">`)}${fairControl('Limited speed','Percentage of baseline kept after the threshold.',`<div class="relative"><input class="${input} pr-8" type="number" min="1" max="100" data-fair="percent" value="${policy?.speed_percent||20}"><span class="text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs">%</span></div>`)}</div><div class="hs-fair-rate" data-rate></div><div class="hs-fair-note">${sharedText}<br>Traffic reset restores full speed until that user reaches the threshold again. ${settings?.enforcement_available?'HS rate adapter is connected.':'Node setup is required for enforcement.'}</div><p role="status" class="hs-fair-save-note" data-result>${id?'Saved together with the normal Host Save button.':'Create the Host first; Fair Use will be saved with it.'}</p></div>`;
+     const target = [...form.querySelectorAll('div')].find(element => element.children.length > 1 && String(element.className).includes('overflow-y-auto')) || form;
+     target.appendChild(field);
+     wire(field, 'host');
+@@ -160,8 +276,10 @@
+     const field = document.createElement('details');
+     field.id = GROUP_ID;
+     field.dataset.groupId = id;
+-    field.className = 'rounded-sm border px-4';
+-    field.innerHTML = `<summary class="flex cursor-pointer items-center gap-2 py-4 text-sm font-medium">Fair Use <span class="hs-gold text-xs">HS</span><span style="margin-inline-start:auto">⌄</span></summary><div class="space-y-4 pb-4"><label class="flex items-center gap-2 text-sm"><input type="checkbox" data-fair="enabled" ${policy?'checked':''}> Limit users in this Group</label><div class="grid gap-3 sm:grid-cols-4"><label class="space-y-2 text-xs">Mode<select class="${input}" data-fair="mode"><option value="always" ${policy?.mode==='always'?'selected':''}>Always</option><option value="threshold" ${policy?.mode==='threshold'?'selected':''}>After usage</option></select></label><label class="space-y-2 text-xs">Traffic (GB)<input class="${input}" type="number" min="0.001" step="0.001" data-fair="gb" value="${policy?.mode==='threshold'?policy.threshold_bytes/1e9:100}"></label><label class="space-y-2 text-xs">Full speed (Mbps)<input class="${input}" type="number" min="0.1" max="100000" step="0.1" data-fair="base" value="${policy?.baseline_mbps||100}"></label><label class="space-y-2 text-xs">Limited speed (%)<input class="${input}" type="number" min="1" max="100" data-fair="percent" value="${policy?.speed_percent||33}"></label></div><p class="text-muted-foreground text-xs" data-rate></p><p class="text-muted-foreground text-xs">Always applies the cap immediately. After usage applies it only after each user's own charged traffic reaches the threshold.</p><p class="text-muted-foreground text-xs">The Group policy applies to every inbound assigned to this Group. If Host and Group policies overlap, the strictest active speed cap wins.</p><p role="status" class="text-xs" data-result>${id?'Changes are saved by the normal Group Save button.':'Create the Group with the normal Save button; Fair Use is saved with it.'}</p></div>`;
++    field.dataset.kind = 'group';
++    field.className = 'hs-fair-section rounded-sm border px-4';
++    const enabled = !!policy;
++    field.innerHTML = `${fairSummary('group', enabled)}<div class="hs-fair-body">${fairToggle('Enable Fair Use for Group','Apply one shared rule to every inbound assigned to this Group.',enabled)}<div class="hs-fair-grid">${fairControl('Mode','Always limits immediately; After usage waits for each user threshold.',`<select class="${input}" data-fair="mode"><option value="always" ${policy?.mode==='always'?'selected':''}>Always</option><option value="threshold" ${policy?.mode==='threshold'?'selected':''}>After usage</option></select>`)}${fairControl('Traffic threshold','Used only when Mode is After usage.',`<input class="${input}" type="number" min="0.001" step="0.001" data-fair="gb" value="${policy?.mode==='threshold'?policy.threshold_bytes/1e9:100}">`)}${fairControl('Full speed','Baseline speed before the Group cap.',`<input class="${input}" type="number" min="0.1" max="100000" step="0.1" data-fair="base" value="${policy?.baseline_mbps||100}">`)}${fairControl('Limited speed','Percentage of baseline retained while limited.',`<div class="relative"><input class="${input} pr-8" type="number" min="1" max="100" data-fair="percent" value="${policy?.speed_percent||33}"><span class="text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs">%</span></div>`)}</div><div class="hs-fair-rate" data-rate></div><div class="hs-fair-note">The Group rule covers all assigned inbounds. If a Host rule and Group rule overlap, the strictest active speed cap wins.</div><p role="status" class="hs-fair-save-note" data-result>${id?'Saved together with the normal Group Save button.':'Create the Group first; Fair Use will be saved with it.'}</p></div>`;
+     const target = [...form.querySelectorAll('div')].find(element => String(element.className).includes('overflow-y-auto') && String(element.className).includes('max-h-')) || form;
+     target.appendChild(field);
+     wire(field, 'group');
+@@ -209,7 +327,9 @@
+         const badge = document.createElement('span');
+         badge.dataset.hsFairStatusBadge = '1';
+         badge.className = nativeBadge?.className || 'bg-muted/80 flex items-center gap-2 rounded-md px-2 py-1 text-sm';
+-        badge.append('Fair limited');
++        const label = document.createElement('span');
++        label.textContent = 'Fair limited';
++        badge.append(label, hsTagElement());
+         const remove = document.createElement('button');
+         remove.type = 'button';
+         remove.className = 'hover:text-destructive';
+@@ -251,8 +371,9 @@
+   function updateFairStatusOption() {
+     const field = activeHostStatusField;
+     if (!field || !document.body.contains(field)) { activeHostStatusField = null; return; }
+-    const native = [...document.querySelectorAll('[role=option]')].find(option =>
++    const natives = [...document.querySelectorAll('[role=option]')].filter(option =>
+       !option.dataset.hsFairStatusOption && /^(active|فعال|disabled|غیرفعال|limited|محدود|expired|منقضی شده|on hold|در انتظار)$/i.test(option.textContent.trim()));
++    const native = natives.find(option => option.querySelector('[role=checkbox][data-state="unchecked"]')) || natives[0];
+     if (!native) return;
+     const parent = native.parentElement;
+     if (!parent) return;
+@@ -260,12 +381,32 @@
+     if (!option) {
+       option = native.cloneNode(true);
+       option.dataset.hsFairStatusOption = '1';
++      option.classList.add('hs-fair-status-option');
+       option.removeAttribute('id');
+       option.removeAttribute('data-disabled');
+       option.removeAttribute('aria-disabled');
+       option.removeAttribute('disabled');
+-      const label = option.querySelector('span.text-sm') || [...option.querySelectorAll('span')].at(-1);
+-      if (label) label.textContent = 'Fair limited'; else option.textContent = 'Fair limited';
++
++      const outerIndicator = [...option.children].find(child => child.tagName === 'SPAN' && String(child.className).includes('absolute'));
++      outerIndicator?.replaceChildren();
++      const content = option.querySelector('div.flex.w-full') || option.querySelector('div');
++      let checkbox = content?.querySelector('[role=checkbox]') || option.querySelector('[role=checkbox]');
++      const label = content?.querySelector('span.text-sm') || [...option.querySelectorAll('span')].at(-1);
++      if (checkbox) {
++        checkbox.dataset.hsFairCheckbox = '1';
++        checkbox.removeAttribute('disabled');
++        checkbox.removeAttribute('data-disabled');
++        checkbox.replaceChildren();
++        checkbox.dataset.state = 'unchecked';
++        checkbox.setAttribute('aria-checked', 'false');
++      }
++      if (label) label.textContent = 'Fair limited';
++      if (content) {
++        content.querySelector('.hs-fair-hs-tag')?.remove();
++        content.appendChild(hsTagElement());
++      } else if (label) {
++        label.after(hsTagElement());
++      }
+       option.addEventListener('pointerdown', event => {
+         event.preventDefault();
+         event.stopPropagation();
+@@ -277,11 +418,13 @@
+     }
