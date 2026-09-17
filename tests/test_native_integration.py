@@ -77,6 +77,21 @@ def test_always_group_policy_limits_all_group_inbounds(runtime):
     assert fair.limited_groups()=={0:{1}}
 
 
+
+def test_user_override_is_immediate_and_keeps_active_host_visibility(runtime):
+    from hs_fair_use import validate_policy
+    policy=validate_policy({'mode':'always','threshold_bytes':0,'baseline_mbps':100,'speed_percent':20})
+    store.write('fair-use.json',{});store.write('fair-use-groups.json',{});store.write('fair-use-users.json',{'1':policy})
+    source='u:1';digest=fair._policy_digest()
+    store.write('fair-runtime.json',{'7':{'revision':'c'*64,'policy_digest':digest,'targets':['7'],'users':{'1':[source]},'reached':{'1':[source]},'policies':{source:policy},'source_tags':{source:['a','b']}}})
+    store.write('reports.json',{'7':{'updated_at':time.time(),'fair_use':{'adapter':'hs-rate-v1','updated_at':time.time(),'revision':'c'*64}}})
+    user=Obj(id=1,status='active',used_traffic=0)
+    state=fair.user_state(user)
+    assert state['status']=='fair_limited' and state['user_override'] is True
+    hosts={1:Obj(inbound_tag='a',status=['active']),2:Obj(inbound_tag='b',status=['active']),3:Obj(inbound_tag='c',status=['active'])}
+    assert fair.filter_hosts(hosts,user)==[hosts[1],hosts[2]]
+    assert fair.limited_groups()=={0:{1}}
+
 def test_fair_limited_host_status_is_distinct_from_native_active(runtime):
     store.write('fair-host-status.json',{'1':True})
     hosts={

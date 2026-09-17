@@ -46,6 +46,13 @@ def fair_api(tmp_path, monkeypatch):
         name = Column(String)
         is_disabled = Column(Boolean, default=False)
 
+    class User(Base):
+        __tablename__ = "users"
+        id = Column(Integer, primary_key=True)
+        username = Column(String, unique=True)
+        status = Column(String, default="active")
+        used_traffic = Column(Integer, default=0)
+
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = Session(engine)
@@ -53,7 +60,7 @@ def fair_api(tmp_path, monkeypatch):
         CoreConfig(id=1, config={"inbounds": [{"tag": "paid", "protocol": "vless"}]}),
         Node(id=7, core_config_id=1), Node(id=8, core_config_id=1),
         ProxyHost(id=1, inbound_tag="paid"), ProxyHost(id=2, inbound_tag="paid"),
-        Group(id=5, name="VIP"),
+        Group(id=5, name="VIP"), User(id=9, username="alice", status="active", used_traffic=0),
     ])
     session.commit()
 
@@ -79,7 +86,7 @@ def fair_api(tmp_path, monkeypatch):
     dbmod = types.ModuleType("app.db"); dbmod.get_db = get_db; dbmod.AsyncSession = object
     monkeypatch.setitem(sys.modules, "app.db", dbmod)
     models = types.ModuleType("app.db.models")
-    for name, value in {"Node":Node,"CoreConfig":CoreConfig,"ProxyHost":ProxyHost,"Group":Group}.items():
+    for name, value in {"Node":Node,"CoreConfig":CoreConfig,"ProxyHost":ProxyHost,"Group":Group,"User":User}.items():
         setattr(models,name,value)
     monkeypatch.setitem(sys.modules, "app.db.models", models)
     for parent in ("app.models", "app.routers"):
@@ -169,3 +176,19 @@ def test_host_fair_status_is_hs_metadata_not_native_enum(fair_api):
     assert disabled.status_code==200 and store.read('fair-host-status.json')=={}
     missing=client.put('/api/hs-services/hosts/999/fair-status',json={'enabled':True},headers=headers)
     assert missing.status_code==404
+
+
+def test_user_fair_override_is_immediate_and_persistent(fair_api):
+    client,_=fair_api; headers={"Authorization":"Bearer owner"}
+    response=client.put("/api/hs-services/users/9/fair-use",json={"baseline_mbps":120,"speed_percent":25},headers=headers)
+    assert response.status_code==200, response.text
+    policy=response.json()["policy"]
+    assert policy["mode"]=="always" and policy["threshold_bytes"]==0
+    assert policy["baseline_mbps"]==120 and policy["speed_percent"]==25
+    assert store.read("fair-use-users.json")["9"]==policy
+    settings=client.get("/api/hs-services/fair-use",headers=headers).json()
+    assert settings["user_policies"]["9"]==policy
+    missing=client.put("/api/hs-services/users/999/fair-use",json={"baseline_mbps":100,"speed_percent":20},headers=headers)
+    assert missing.status_code==404
+    deleted=client.delete("/api/hs-services/users/9/fair-use",headers=headers)
+    assert deleted.status_code==200 and store.read("fair-use-users.json")=={}

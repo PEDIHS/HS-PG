@@ -45,6 +45,7 @@ def _policy_digest():
         "inbounds":snapshot('fair-use-inbounds.json'),
         "legacy_hosts":snapshot('fair-use.json'),
         "groups":snapshot('fair-use-groups.json'),
+        "users":snapshot('fair-use-users.json'),
     }
     return hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
@@ -85,6 +86,7 @@ def user_state(user):
     return {
         'status':'active' if pending else 'fair_limited','pending':pending,
         'source_ids':sorted(applicable),'inbound_tags':sorted(tags),
+        'user_override':f'u:{uid}' in applicable,
     }
 
 
@@ -105,7 +107,8 @@ def filter_hosts(hosts,user):
         native_status=_status_value(getattr(user,'status','active'))
         return [host for host_id,host in hosts.items() if _host_status_matches(host_id,host,native_status)]
     tags=set(state.get('inbound_tags',[]))
-    return [host for host_id,host in hosts.items() if host.inbound_tag in tags and _host_status_matches(host_id,host,'fair_limited')]
+    effective='active' if state.get('user_override') else 'fair_limited'
+    return [host for host_id,host in hosts.items() if host.inbound_tag in tags and _host_status_matches(host_id,host,effective)]
 
 
 async def manifest(db,target):
@@ -121,6 +124,7 @@ async def manifest(db,target):
     raw_hosts=snapshot('fair-use.json') if enabled() else {}
     raw_inbounds=snapshot('fair-use-inbounds.json') if enabled() else {}
     raw_groups=snapshot('fair-use-groups.json') if enabled() else {}
+    raw_users=snapshot('fair-use-users.json') if enabled() else {}
     inbound_rules={};migrations={}
     active_tags={host.inbound_tag for host in hosts if not host.is_disabled and host.inbound_tag}
     for tag in sorted(active_tags):
@@ -143,6 +147,10 @@ async def manifest(db,target):
     for identity,value in raw_groups.items():
         try:group_rules[str(identity)]=validate_policy(value)
         except ValueError:pass
+    user_rules={}
+    for identity,value in raw_users.items():
+        try:user_rules[str(identity)]=validate_policy(value)
+        except ValueError:pass
     peers=sorted(str(value) for value in (await db.execute(select(Node.id).where(Node.core_config_id==node.core_config_id))).scalars().all())
     rates={};users={};reached={};runtime_policies={};source_tags={}
     rows=(await db.execute(select(User.id,User.used_traffic,Group.id,ProxyInbound.tag).select_from(User)
@@ -150,7 +158,7 @@ async def manifest(db,target):
         .join(Group,Group.id==users_groups_association.c.groups_id)
         .join(inbounds_groups_association,inbounds_groups_association.c.group_id==Group.id)
         .join(ProxyInbound,ProxyInbound.id==inbounds_groups_association.c.inbound_id)
-        .where(User.status=='active',Group.is_disabled.is_(False),ProxyInbound.tag.in_(tags)))).all() if (inbound_rules or group_rules) else []
+        .where(User.status=='active',Group.is_disabled.is_(False),ProxyInbound.tag.in_(tags)))).all() if (inbound_rules or group_rules or user_rules) else []
     by_user={}
     for uid,used,gid,tag in rows:
         item=by_user.setdefault(str(uid),{'used':int(used or 0),'tags':{}})
@@ -159,6 +167,8 @@ async def manifest(db,target):
         all_sources=set();hit=set()
         for tag,gids in user['tags'].items():
             entries=[]
+            if uid in user_rules:
+                entries.append((f'u:{uid}',user_rules[uid]))
             if tag in inbound_rules:
                 source=f'i:{core.id}:{tag}';entries.append((source,inbound_rules[tag]))
             for gid in gids:
