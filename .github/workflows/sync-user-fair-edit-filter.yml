@@ -1,0 +1,26 @@
+name: sync-user-fair-edit-filter
+on:
+  push:
+    branches: [fix/user-fair-edit-filter]
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/user-fair-edit-filter
+          fetch-depth: 0
+      - name: Apply verified Fair Use edit/filter patch
+        run: |
+          cat .sync/ufe-00.patch .sync/ufe-01.patch .sync/ufe-02.patch .sync/ufe-03.patch .sync/ufe-04.patch .sync/ufe-05.patch .sync/ufe-06.patch .sync/ufe-07.patch > /tmp/ufe.patch
+          echo 'ed4e524d4b64a1f661c2046837d32ffa6d2a674d08f4a3dc51ae174da722034b  /tmp/ufe.patch' | sha256sum -c -
+          git apply --check /tmp/ufe.patch
+          git apply /tmp/ufe.patch
+          rm -f .sync/ufe-*.patch .github/workflows/sync-user-fair-edit-filter.yml
+          git config user.name PEDIHS
+          git config user.email 130468444+PEDIHS@users.noreply.github.com
+          git add -A
+          git commit -m 'Fix per-user Fair Use edit and native filtering'
+          git push
